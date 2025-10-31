@@ -1,116 +1,133 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional
-from datetime import datetime, timedelta
-from models.connection import Connection, ConnectionStatus
-from models.protocol import Protocol
+from beanie import Document
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
+from datetime import datetime
+from enum import Enum
 
-router = APIRouter()
+class ConnectionStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ERROR = "error"
+    CONNECTING = "connecting"
+    DISCONNECTED = "disconnected"
 
-@router.get("/connections", response_model=List[dict])
-async def get_connections():
-    """Get list of all connections"""
-    try:
-        connections = await Connection.find_all().to_list()
-        connection_list = []
-        
-        for connection in connections:
-            # Get protocol info
-            protocol = await Protocol.get(connection.protocol_id)
-            
-            connection_dict = connection.dict()
-            connection_dict["id"] = str(connection.id)
-            connection_dict["protocol"] = {
-                "id": str(protocol.id),
-                "name": protocol.name,
-                "type": protocol.type
-            } if protocol else None
-            
-            connection_list.append(connection_dict)
-        
-        return connection_list
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+class ConnectionType(str, Enum):
+    MODBUS_TCP = "modbus-tcp"
+    OPC_UA = "opc-ua"
+    MQTT = "mqtt"
+    ETHERNET_IP = "ethernet-ip"
+    PROFINET = "profinet"
+    CANOPEN = "canopen"
+    BACNET = "bacnet"
 
-@router.get("/connections/{connection_id}")
-async def get_connection(connection_id: str):
-    """Get connection by ID"""
-    try:
-        connection = await Connection.get(connection_id)
-        if not connection:
-            raise HTTPException(status_code=404, detail="Connection not found")
+class Connection(Document):
+    """Connection model for industrial protocol connections"""
+    
+    # Basic Information
+    name: str
+    description: Optional[str] = None
+    protocol_id: str  # Reference to Protocol document
+    device_id: Optional[str] = None  # Reference to Device document
+    
+    # Connection Details
+    address: str  # IP address, hostname, or connection string
+    port: Optional[int] = None
+    status: ConnectionStatus = ConnectionStatus.INACTIVE
+    connection_type: ConnectionType
+    
+    # Configuration
+    configuration: Dict[str, Any] = Field(default_factory=dict)
+    timeout: Optional[float] = 30.0
+    retry_count: int = 3
+    retry_interval: float = 5.0
+    
+    # Connection Statistics
+    bytes_sent: int = 0
+    bytes_received: int = 0
+    bytes_transferred: int = 0
+    packets_sent: int = 0
+    packets_received: int = 0
+    error_count: int = 0
+    success_count: int = 0
+    
+    # Connection Health
+    last_seen: Optional[datetime] = None
+    last_error: Optional[str] = None
+    last_success: Optional[datetime] = None
+    uptime_seconds: float = 0.0
+    response_time_ms: float = 0.0
+    
+    # Quality Metrics
+    connection_quality: float = 0.0  # 0-100% based on success rate
+    data_rate_bps: float = 0.0  # Bytes per second
+    latency_ms: float = 0.0
+    packet_loss_percent: float = 0.0
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    connected_at: Optional[datetime] = None
+    disconnected_at: Optional[datetime] = None
+    
+    # Security
+    encrypted: bool = False
+    certificate_id: Optional[str] = None
+    
+    # Additional metadata
+    tags: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    class Settings:
+        collection_name = "connections"
+        indexes = [
+            "protocol_id",
+            "device_id", 
+            "status",
+            "connection_type",
+            "address",
+            "created_at",
+            ["protocol_id", "status"],
+            ["device_id", "status"]
+        ]
+    
+    def update_stats(self, bytes_sent: int = 0, bytes_received: int = 0, 
+                    packets_sent: int = 0, packets_received: int = 0, 
+                    success: bool = True, error_msg: Optional[str] = None):
+        """Update connection statistics"""
+        self.bytes_sent += bytes_sent
+        self.bytes_received += bytes_received
+        self.bytes_transferred = self.bytes_sent + self.bytes_received
+        self.packets_sent += packets_sent
+        self.packets_received += packets_received
         
-        # Get protocol info
-        protocol = await Protocol.get(connection.protocol_id)
+        if success:
+            self.success_count += 1
+            self.last_success = datetime.now()
+            self.last_seen = datetime.now()
+        else:
+            self.error_count += 1
+            if error_msg:
+                self.last_error = error_msg
         
-        result = connection.dict()
-        result["id"] = str(connection.id)
-        result["protocol"] = {
-            "id": str(protocol.id),
-            "name": protocol.name,
-            "type": protocol.type
-        } if protocol else None
+        # Calculate quality metrics
+        total_attempts = self.success_count + self.error_count
+        if total_attempts > 0:
+            self.connection_quality = (self.success_count / total_attempts) * 100
         
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/connections/{connection_id}/test")
-async def test_connection(connection_id: str):
-    """Test connection"""
-    try:
-        connection = await Connection.get(connection_id)
-        if not connection:
-            raise HTTPException(status_code=404, detail="Connection not found")
-        
-        protocol = await Protocol.get(connection.protocol_id)
-        if not protocol:
-            raise HTTPException(status_code=404, detail="Protocol not found")
-        
-        from services.protocol_services import get_protocol_service
-        service = get_protocol_service(protocol.type)
-        
-        if service:
-            success = await service.test_connection(connection.address, protocol.configuration)
-            
-            # Update connection status
-            connection.status = ConnectionStatus.ACTIVE if success else ConnectionStatus.ERROR
-            connection.last_seen = datetime.now()
-            await connection.save()
-            
-            return {
-                "success": success,
-                "message": "Connection test successful" if success else "Connection test failed"
-            }
-        
-        return {"success": False, "message": "Protocol service not available"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/connections/stats")
-async def get_connection_stats():
-    """Get connection statistics"""
-    try:
-        total_connections = await Connection.count()
-        active_connections = await Connection.find(Connection.status == ConnectionStatus.ACTIVE).count()
-        error_connections = await Connection.find(Connection.status == ConnectionStatus.ERROR).count()
-        
-        # Calculate data transfer stats
-        connections = await Connection.find_all().to_list()
-        total_bytes = sum(conn.bytes_transferred or 0 for conn in connections)
-        total_errors = sum(conn.error_count or 0 for conn in connections)
-        
-        return {
-            "totalConnections": total_connections,
-            "activeConnections": active_connections,
-            "errorConnections": error_connections,
-            "inactiveConnections": total_connections - active_connections - error_connections,
-            "totalBytesTransferred": total_bytes,
-            "totalErrors": total_errors,
-            "averageDataRate": round(total_bytes / max(total_connections, 1), 2)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        self.updated_at = datetime.now()
+    
+    def get_uptime(self) -> float:
+        """Get connection uptime in seconds"""
+        if self.connected_at and self.status == ConnectionStatus.ACTIVE:
+            return (datetime.now() - self.connected_at).total_seconds()
+        return 0.0
+    
+    def is_healthy(self) -> bool:
+        """Check if connection is healthy"""
+        return (
+            self.status == ConnectionStatus.ACTIVE and
+            self.connection_quality >= 80.0 and
+            self.packet_loss_percent < 5.0 and
+            (not self.last_seen or 
+             (datetime.now() - self.last_seen).total_seconds() < 300)  # Last seen within 5 minutes
+        )
