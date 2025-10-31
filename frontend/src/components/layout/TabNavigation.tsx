@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { SystemDashboard } from '@/components/monitoring/SystemDashboard';
-import { ProtocolManager } from '@/components/protocols/ProtocolManager';  // ← DODAJ!
-import { ConnectionManager } from '@/components/connections/ConnectionManager'; // ← DODAJ!
-import { DeviceManager } from '@/components/devices/DeviceManager';     // ← DODAJ!
-import { SettingsPage } from '@/components/settings/SettingsPage';      // ← DODAJ!
+import { ProtocolManager } from '@/components/protocols/ProtocolManager';
+import { ConnectionManager } from '@/components/connections/ConnectionManager';
+import { DeviceManager } from '@/components/devices/DeviceManager';
+import { SettingsPage } from '@/components/settings/SettingsPage';
+import { IntegrationManager } from '@/components/integrations/IntegrationManager';
 
 export const TabNavigation: React.FC = () => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -12,58 +13,47 @@ export const TabNavigation: React.FC = () => {
     switch (activeTab) {
       case 'overview':
         return <SystemDashboard />;
-      case 'protocols':           // ← DODAJ!
+      case 'protocols':
         return <ProtocolManager />;
-      case 'connections':         // ← DODAJ!
+      case 'connections':
         return <ConnectionManager />;
-      case 'devices':             // ← DODAJ!
+      case 'devices':
         return <DeviceManager />;
-      case 'settings':            // ← DODAJ!
+      case 'integrations':
+        return <IntegrationManager />;
+      case 'settings':
         return <SettingsPage />;
       default:
         return <SystemDashboard />;
     }
   };
 
+  const tabs = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'protocols', label: 'Protocols' },
+    { id: 'connections', label: 'Connections' },
+    { id: 'devices', label: 'Devices' },
+    { id: 'integrations', label: 'Integrations' },
+    { id: 'settings', label: 'Settings' }
+  ];
+
   return (
     <div className="flex flex-col h-full">
       <div className="border-b bg-white">
         <nav className="flex space-x-8 px-6">
-          <button 
-            onClick={() => setActiveTab('overview')}
-            className={`py-4 ${activeTab === 'overview' ? 'text-blue-600 border-b-2 border-blue-500' : 'text-gray-500'}`}
-          >
-            Overview
-          </button>
-          
-          {/* ← DODAJ WSZYSTKIE TABS: */}
-          <button 
-            onClick={() => setActiveTab('protocols')}
-            className={`py-4 ${activeTab === 'protocols' ? 'text-blue-600 border-b-2 border-blue-500' : 'text-gray-500'}`}
-          >
-            Protocols
-          </button>
-          
-          <button 
-            onClick={() => setActiveTab('connections')}
-            className={`py-4 ${activeTab === 'connections' ? 'text-blue-600 border-b-2 border-blue-500' : 'text-gray-500'}`}
-          >
-            Connections
-          </button>
-          
-          <button 
-            onClick={() => setActiveTab('devices')}
-            className={`py-4 ${activeTab === 'devices' ? 'text-blue-600 border-b-2 border-blue-500' : 'text-gray-500'}`}
-          >
-            Devices
-          </button>
-          
-          <button 
-            onClick={() => setActiveTab('settings')}
-            className={`py-4 ${activeTab === 'settings' ? 'text-blue-600 border-b-2 border-blue-500' : 'text-gray-500'}`}
-          >
-            Settings
-          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`py-4 px-2 border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? 'text-blue-600 border-blue-500'
+                  : 'text-gray-500 border-transparent hover:text-gray-700'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </nav>
       </div>
       <div className="flex-1 p-6">
