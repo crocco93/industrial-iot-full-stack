@@ -1,173 +1,214 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import List, Optional
+from beanie import Document
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
 from datetime import datetime
-from models.device import Device, DeviceStatus
-from models.protocol import Protocol
+from enum import Enum
 
-router = APIRouter()
+class DeviceStatus(str, Enum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ERROR = "error"
+    MAINTENANCE = "maintenance"
+    PROVISIONING = "provisioning"
+    OFFLINE = "offline"
+    ONLINE = "online"
 
-@router.get("/devices", response_model=List[dict])
-async def get_devices():
-    """Get list of all devices"""
-    try:
-        devices = await Device.find_all().to_list()
-        device_list = []
-        
-        for device in devices:
-            # Get protocol info
-            protocol = await Protocol.get(device.protocol_id)
-            
-            device_dict = device.dict()
-            device_dict["id"] = str(device.id)
-            device_dict["protocol"] = {
-                "id": str(protocol.id),
-                "name": protocol.name,
-                "type": protocol.type
-            } if protocol else None
-            
-            device_list.append(device_dict)
-        
-        return device_list
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+class DeviceType(str, Enum):
+    INFRASTRUCTURE = "infrastructure"
+    PRODUCTION = "production"
+    SENSOR = "sensor"
+    ACTUATOR = "actuator"
+    CONTROLLER = "controller"
+    ROBOT = "robot"
+    PLC = "plc"
+    HMI = "hmi"
+    DRIVE = "drive"
 
-@router.get("/devices/{device_id}")
-async def get_device(device_id: str):
-    """Get device by ID"""
-    try:
-        device = await Device.get(device_id)
-        if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
-        
-        # Get protocol info
-        protocol = await Protocol.get(device.protocol_id)
-        
-        result = device.dict()
-        result["id"] = str(device.id)
-        result["protocol"] = {
-            "id": str(protocol.id),
-            "name": protocol.name,
-            "type": protocol.type
-        } if protocol else None
-        
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+class DeviceCategory(str, Enum):
+    POWER_METER = "power_meter"
+    TEMPERATURE_SENSOR = "temperature_sensor"
+    PRESSURE_SENSOR = "pressure_sensor"
+    FLOW_SENSOR = "flow_sensor"
+    LEVEL_SENSOR = "level_sensor"
+    VIBRATION_SENSOR = "vibration_sensor"
+    PLC_CONTROLLER = "plc_controller"
+    MOTOR_DRIVE = "motor_drive"
+    ROBOT_ARM = "robot_arm"
+    CONVEYOR = "conveyor"
+    PACKAGING_MACHINE = "packaging_machine"
+    QUALITY_SCANNER = "quality_scanner"
 
-@router.post("/devices")
-async def create_device(device_data: dict):
-    """Create new device"""
-    try:
-        # Validate protocol exists
-        protocol = await Protocol.get(device_data.get("protocolId"))
-        if not protocol:
-            raise HTTPException(status_code=400, detail="Protocol not found")
+class Device(Document):
+    """Device model representing industrial equipment and sensors"""
+    
+    # Basic Information
+    name: str
+    description: Optional[str] = None
+    device_type: DeviceType = DeviceType.PRODUCTION
+    category: Optional[DeviceCategory] = None
+    
+    # Hierarchical Structure
+    location_id: Optional[str] = None  # Reference to Location
+    area_id: Optional[str] = None      # Reference to Area
+    parent_device_id: Optional[str] = None  # For sub-devices
+    
+    # Protocol Connection
+    protocol_id: Optional[str] = None  # Reference to Protocol document
+    connection_id: Optional[str] = None  # Reference to Connection document
+    
+    # Device Identification
+    vendor: Optional[str] = None
+    model: Optional[str] = None
+    serial_number: Optional[str] = None
+    firmware_version: Optional[str] = None
+    hardware_version: Optional[str] = None
+    
+    # Network Configuration
+    address: Optional[str] = None  # IP address or network identifier
+    port: Optional[int] = None
+    unit_id: Optional[int] = None  # Modbus unit ID, OPC-UA node ID, etc.
+    device_id: Optional[int] = None  # Protocol-specific device ID
+    
+    # Device Status
+    status: DeviceStatus = DeviceStatus.INACTIVE
+    online: bool = False
+    last_seen: Optional[datetime] = None
+    last_error: Optional[str] = None
+    last_success: Optional[datetime] = None
+    
+    # Communication Settings
+    read_frequency: int = 1000  # milliseconds
+    timeout: float = 5.0  # seconds
+    retry_count: int = 3
+    polling_enabled: bool = True
+    
+    # Configuration
+    configuration: Dict[str, Any] = Field(default_factory=dict)
+    tags: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Statistics
+    total_reads: int = 0
+    successful_reads: int = 0
+    failed_reads: int = 0
+    bytes_transferred: int = 0
+    average_response_time: float = 0.0
+    
+    # Quality Metrics
+    availability_percent: float = 0.0
+    reliability_percent: float = 0.0
+    data_quality_score: float = 0.0
+    
+    # Physical Properties (for sensors)
+    measurement_unit: Optional[str] = None
+    min_value: Optional[float] = None
+    max_value: Optional[float] = None
+    precision: Optional[int] = None
+    
+    # Timestamps
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_maintenance: Optional[datetime] = None
+    next_maintenance: Optional[datetime] = None
+    
+    # Security
+    encrypted: bool = False
+    certificate_id: Optional[str] = None
+    access_level: str = "read"  # read, write, admin
+    
+    class Settings:
+        collection_name = "devices"
+        indexes = [
+            "protocol_id",
+            "connection_id",
+            "location_id",
+            "area_id",
+            "device_type",
+            "category",
+            "status",
+            "address",
+            "created_at",
+            ["location_id", "area_id"],
+            ["protocol_id", "status"],
+            ["device_type", "status"]
+        ]
+    
+    def update_stats(self, success: bool, response_time: float = 0.0, bytes_count: int = 0, error_msg: Optional[str] = None):
+        """Update device statistics"""
+        self.total_reads += 1
         
-        device = Device(
-            name=device_data.get("name", ""),
-            description=device_data.get("description", ""),
-            protocol_id=device_data.get("protocolId", ""),
-            address=device_data.get("address", ""),
-            status=DeviceStatus.INACTIVE,
-            read_frequency=device_data.get("readFrequency", 1000)
+        if success:
+            self.successful_reads += 1
+            self.last_success = datetime.utcnow()
+            self.last_seen = datetime.utcnow()
+            self.online = True
+            self.status = DeviceStatus.ACTIVE if self.status != DeviceStatus.MAINTENANCE else DeviceStatus.MAINTENANCE
+        else:
+            self.failed_reads += 1
+            if error_msg:
+                self.last_error = error_msg
+            self.online = False
+            if self.status not in [DeviceStatus.MAINTENANCE, DeviceStatus.PROVISIONING]:
+                self.status = DeviceStatus.ERROR
+        
+        self.bytes_transferred += bytes_count
+        
+        # Update response time (rolling average)
+        if response_time > 0:
+            self.average_response_time = (
+                (self.average_response_time * (self.total_reads - 1) + response_time) / self.total_reads
+            )
+        
+        # Calculate quality metrics
+        if self.total_reads > 0:
+            self.reliability_percent = (self.successful_reads / self.total_reads) * 100
+        
+        self.updated_at = datetime.utcnow()
+    
+    def calculate_availability(self, period_hours: int = 24) -> float:
+        """Calculate device availability over specified period"""
+        if not self.last_seen:
+            return 0.0
+        
+        time_since_seen = (datetime.utcnow() - self.last_seen).total_seconds() / 3600
+        if time_since_seen > period_hours:
+            return 0.0
+        
+        uptime_percent = max(0, 100 - (time_since_seen / period_hours * 100))
+        return min(100, uptime_percent)
+    
+    def is_healthy(self) -> bool:
+        """Check if device is considered healthy"""
+        return (
+            self.status in [DeviceStatus.ACTIVE, DeviceStatus.ONLINE] and
+            self.online and
+            self.reliability_percent >= 95.0 and
+            (not self.last_seen or 
+             (datetime.utcnow() - self.last_seen).total_seconds() < 300)  # Last seen within 5 minutes
         )
-        
-        await device.insert()
-        
-        result = device.dict()
-        result["id"] = str(device.id)
-        result["protocol"] = {
-            "id": str(protocol.id),
-            "name": protocol.name,
-            "type": protocol.type
-        }
-        
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/devices/{device_id}")
-async def update_device(device_id: str, device_data: dict):
-    """Update device"""
-    try:
-        device = await Device.get(device_id)
-        if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
-        
-        # Update fields
-        for field, value in device_data.items():
-            if field in ["name", "description", "address", "status", "readFrequency"]:
-                if field == "status":
-                    value = DeviceStatus(value)
-                setattr(device, field.replace("F", "_f") if "F" in field else field, value)
-        
-        device.updated_at = datetime.now()
-        await device.save()
-        
-        # Get updated protocol info
-        protocol = await Protocol.get(device.protocol_id)
-        
-        result = device.dict()
-        result["id"] = str(device.id)
-        result["protocol"] = {
-            "id": str(protocol.id),
-            "name": protocol.name,
-            "type": protocol.type
-        } if protocol else None
-        
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.delete("/devices/{device_id}")
-async def delete_device(device_id: str):
-    """Delete device"""
-    try:
-        device = await Device.get(device_id)
-        if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
-        
-        # Delete associated data points
-        from models.datapoint import DataPoint
-        await DataPoint.find(DataPoint.device_id == device_id).delete()
-        
-        await device.delete()
-        return {"success": True, "message": "Device deleted successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/devices/{device_id}/test")
-async def test_device_connection(device_id: str):
-    """Test device connection"""
-    try:
-        device = await Device.get(device_id)
-        if not device:
-            raise HTTPException(status_code=404, detail="Device not found")
-        
-        protocol = await Protocol.get(device.protocol_id)
-        if not protocol:
-            raise HTTPException(status_code=404, detail="Protocol not found")
-        
-        from services.protocol_services import get_protocol_service
-        service = get_protocol_service(protocol.type)
-        
-        if service:
-            success = await service.test_connection(device.address, protocol.configuration)
-            return {
-                "success": success,
-                "message": "Connection test successful" if success else "Connection test failed"
+    
+    def get_display_name(self) -> str:
+        """Get formatted display name for UI"""
+        if self.vendor and self.model:
+            return f"{self.name} ({self.vendor} {self.model})"
+        return self.name
+    
+    def to_tree_node(self) -> Dict[str, Any]:
+        """Convert device to tree node structure for hierarchical display"""
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "type": "device",
+            "device_type": self.device_type,
+            "category": self.category,
+            "status": self.status,
+            "online": self.online,
+            "children": [],  # Data points will be added separately
+            "metadata": {
+                "vendor": self.vendor,
+                "model": self.model,
+                "address": self.address,
+                "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+                "reliability": self.reliability_percent
             }
-        
-        return {"success": False, "message": "Protocol service not available"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        }
