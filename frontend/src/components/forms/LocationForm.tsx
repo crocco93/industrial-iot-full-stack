@@ -7,9 +7,15 @@ interface Props {
   onCancel: () => void;
 }
 
-export const LocationForm: React.FC<Props> = ({ location, onSubmit, onCancel }) => {
+export const LocationForm: React.FC<Props> = ({ location, onCancel }) => {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Implementation needed
+    console.log('Form submitted');
+  };
+
   return (
-    <form className="space-y-4">
+    <form className="space-y-4" onSubmit={handleSubmit}>
       <div>
         <label className="block text-sm font-medium mb-1">Location Name</label>
         <input 
