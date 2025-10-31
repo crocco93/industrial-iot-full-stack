@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 from database.mongodb import init_database, close_database
-from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health
+from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards
 from services.protocol_manager import protocol_manager
 from services.websocket_manager import start_websocket_heartbeat
 
@@ -90,9 +90,10 @@ app.add_middleware(
 # Include API routers
 app.include_router(protocols.router, prefix="/api", tags=["protocols"])
 app.include_router(connections.router, prefix="/api", tags=["connections"])
-app.include_router(devices.router, prefix="/api", tags=["devices"])  # ✅ DODANE
+app.include_router(devices.router, prefix="/api", tags=["devices"])
+app.include_router(dashboards.router, prefix="/api", tags=["dashboards"])  # ✅ DODANE
 app.include_router(monitoring.router, prefix="/api", tags=["monitoring"])
-app.include_router(health.router, prefix="/api", tags=["health"])  # ✅ DODANE
+app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 app.include_router(security.router, prefix="/api", tags=["security"])
 app.include_router(settings.router, prefix="/api", tags=["settings"])
