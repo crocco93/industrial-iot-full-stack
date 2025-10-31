@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 from database.mongodb import init_database, close_database
-from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations
+from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health
 from services.protocol_manager import protocol_manager
 from services.websocket_manager import start_websocket_heartbeat
 
@@ -90,13 +90,15 @@ app.add_middleware(
 # Include API routers
 app.include_router(protocols.router, prefix="/api", tags=["protocols"])
 app.include_router(connections.router, prefix="/api", tags=["connections"])
+app.include_router(devices.router, prefix="/api", tags=["devices"])  # ✅ DODANE
 app.include_router(monitoring.router, prefix="/api", tags=["monitoring"])
+app.include_router(health.router, prefix="/api", tags=["health"])  # ✅ DODANE
 app.include_router(logs.router, prefix="/api", tags=["logs"])
 app.include_router(security.router, prefix="/api", tags=["security"])
 app.include_router(settings.router, prefix="/api", tags=["settings"])
 app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 app.include_router(data_points.router, prefix="/api", tags=["data-points"])
-app.include_router(integrations.router, prefix="/api", tags=["integrations"])  # ✅ DODANE
+app.include_router(integrations.router, prefix="/api", tags=["integrations"])
 
 # Root endpoints
 @app.get("/")
@@ -120,12 +122,14 @@ async def root():
             "Ollama LLM Assistant"
         ],
         "documentation": "/docs",
-        "openapi": "/openapi.json"
+        "openapi": "/openapi.json",
+        "health_check": "/health",
+        "detailed_health": "/api/health/detailed"
     }
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Basic health check endpoint"""
     try:
         # Get protocol manager status
         protocol_status = protocol_manager.get_all_protocol_status()
@@ -167,10 +171,12 @@ async def api_status():
         try:
             from models.protocol import Protocol
             from models.connection import Connection
+            from models.device import Device
             from models.monitoring import MonitoringData
             
             total_protocols = await Protocol.count()
             total_connections = await Connection.count()
+            total_devices = await Device.count()
             
             # Recent monitoring data (last hour)
             from datetime import timedelta
@@ -182,6 +188,7 @@ async def api_status():
             db_stats = {
                 "total_protocols": total_protocols,
                 "total_connections": total_connections,
+                "total_devices": total_devices,
                 "monitoring_data_last_hour": recent_monitoring
             }
         except Exception as e:
@@ -189,6 +196,7 @@ async def api_status():
             db_stats = {
                 "total_protocols": 0,
                 "total_connections": 0,
+                "total_devices": 0,
                 "monitoring_data_last_hour": 0,
                 "note": f"Database unavailable: {e}"
             }
@@ -216,6 +224,7 @@ if __name__ == "__main__":
     print(f"📡 Supported protocols: Modbus TCP, OPC-UA, Profinet, EtherNet/IP, MQTT, CANopen, BACnet")
     print(f"🔗 Integrations: N8N Workflows, Ollama LLM")
     print(f"🌐 API Documentation: http://{host}:{port}/docs")
+    print(f"🏥 Health Check: http://{host}:{port}/health")
     
     uvicorn.run(
         "main:app",
