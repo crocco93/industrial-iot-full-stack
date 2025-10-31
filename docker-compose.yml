@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  # Backend - FastAPI + WebSocket
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: industrial-iot-backend
+    ports:
+      - "3001:3001"
+      - "3002:3002"
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017/industrial_iot
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - industrial-network
+    restart: unless-stopped
+
+  # Frontend - React + Nginx
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: industrial-iot-frontend
+    ports:
+      - "80:80"
+    environment:
+      - VITE_API_URL=http://backend:3001/api
+      - VITE_WS_URL=ws://backend:3002/ws
+      - VITE_N8N_URL=http://n8n:5678
+      - VITE_LLM_URL=http://ollama:11434
+    depends_on:
+      - backend
+    networks:
+      - industrial-network
+    restart: unless-stopped
+
+  # Database - MongoDB
+  mongodb:
+    image: mongo:7.0
+    container_name: industrial-iot-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=industrial_iot_2024
+      - MONGO_INITDB_DATABASE=industrial_iot
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - industrial-network
+    restart: unless-stopped
+
+  # Cache - Redis
+  redis:
+    image: redis:7.2-alpine
+    container_name: industrial-iot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - industrial-network
+    restart: unless-stopped
+
+  # N8N - Workflow Automation (FULL PROFILE)
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: industrial-iot-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=industrial_n8n_2024
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - industrial-network
+    restart: unless-stopped
+    profiles:
+      - full
+
+  # Local LLM - Ollama (FULL PROFILE)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: industrial-iot-llama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - industrial-network
+    restart: unless-stopped
+    profiles:
+      - full
+
+volumes:
+  mongodb_data:
+  redis_data:
+  n8n_data:
+  ollama_data:
+
+networks:
+  industrial-network:
+    driver: bridge
+
+# Usage:
+# Core: docker-compose up --build
+# Full: docker-compose --profile full up --build
