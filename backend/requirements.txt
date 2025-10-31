@@ -24,6 +24,9 @@ pydantic-settings==2.1.0
 redis==5.0.1
 aioredis==2.0.1
 
+# HTTP client for integrations (N8N, Ollama)
+httpx==0.25.2
+
 # Cryptography for security
 cryptography==41.0.7
 
