@@ -11,7 +11,7 @@ services:
       - "3001:3001"
       - "3002:3002"
     environment:
-      - MONGO_URL=mongodb://mongodb:27017/industrial_iot
+      - MONGO_URL=mongodb://admin:industrial_iot_2024@mongodb:27017/industrial_iot?authSource=admin
       - REDIS_URL=redis://redis:6379
     depends_on:
       - mongodb
@@ -25,14 +25,19 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:  # ← DODAJ ARGS SECTION!
+      - VITE_API_URL=http://localhost:3001/api
+      - VITE_WS_URL=ws://localhost:3002/ws
+      - VITE_N8N_URL=http://localhost:5678
+      - VITE_LLM_URL=http://localhost:11434
     container_name: industrial-iot-frontend
     ports:
       - "80:80"
     environment:
-      - VITE_API_URL=http://backend:3001/api
-      - VITE_WS_URL=ws://backend:3002/ws
-      - VITE_N8N_URL=http://n8n:5678
-      - VITE_LLM_URL=http://ollama:11434
+      - VITE_API_URL=http://localhost:3001/api     # ← ZMIEŃ!
+      - VITE_WS_URL=ws://localhost:3002/ws         # ← ZMIEŃ!
+      - VITE_N8N_URL=http://localhost:5678
+      - VITE_LLM_URL=http://localhost:11434
     depends_on:
       - backend
     networks:
@@ -51,7 +56,6 @@ services:
       - MONGO_INITDB_DATABASE=industrial_iot
     volumes:
       - mongodb_data:/data/db
-      - ./mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
     networks:
       - industrial-network
     restart: unless-stopped
@@ -111,5 +115,5 @@ networks:
     driver: bridge
 
 # Usage:
-# Core: docker-compose up --build
-# Full: docker-compose --profile full up --build
+# Core: docker compose up --build
+# Full: docker compose --profile full up --build

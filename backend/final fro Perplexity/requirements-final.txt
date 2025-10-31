@@ -1,0 +1,89 @@
+# FastAPI and ASGI server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database
+pymongo==4.6.0
+motor==3.3.2
+beanie==1.26.0
+
+# WebSocket support
+websockets==12.0
+
+# Authentication and security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+python-multipart==0.0.6
+
+# Environment and configuration
+python-dotenv==1.0.0
+pydantic==2.5.3
+pydantic-settings==2.1.0
+
+# Redis for caching and sessions
+redis==5.0.1
+aioredis==2.0.1
+
+# Cryptography for security
+cryptography==41.0.7
+
+# Utilities
+typing-extensions==4.8.0
+
+# Logging
+loguru==0.7.2
+
+# Development and testing
+requests==2.31.0
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# ===== INDUSTRIAL PROTOCOL LIBRARIES =====
+
+# Modbus TCP/RTU support
+modbus-tk==1.1.3
+pymodbus==3.5.2
+
+# OPC-UA support
+asyncua==1.0.4
+opcua-client==0.8.4
+
+# MQTT support
+paho-mqtt==1.6.1
+
+# EtherNet/IP support (Allen-Bradley PLCs)
+pycomm3==1.2.14
+cpppo==4.3.8
+
+# BACnet support
+bacpypes==0.18.7
+bacpypes3==0.0.97
+
+# CANopen support
+canopen==2.2.0
+python-can==4.3.1
+
+# Profinet support (requires additional system dependencies)
+snap7==1.3
+pyads==3.3.18
+
+# Additional networking utilities
+scapy==2.5.0
+netifaces==0.11.0
+
+# Serial communication (for RTU protocols)
+pyserial==3.5
+pyserial-asyncio==0.6
+
+# XML parsing (for some industrial protocols)
+lxml==4.9.3
+xmltodict==0.13.0
+
+# Industrial data format support
+bitstring==4.1.2
+
+# Networking and socket utilities
+websocket-client==1.6.4
+
+# Protocol-specific utilities
+struct-tools==0.3.1

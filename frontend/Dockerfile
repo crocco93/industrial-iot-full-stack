@@ -3,6 +3,12 @@ FROM node:20-alpine as build
 
 WORKDIR /app
 
+# DODAJ ARGs dla VITE variables:
+ARG VITE_API_URL
+ARG VITE_WS_URL
+ARG VITE_N8N_URL  
+ARG VITE_LLM_URL
+
 # Copy package files
 COPY package.json ./
 
@@ -12,7 +18,12 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Build application
+# Build application (używa ARG jako ENV)
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+ENV VITE_N8N_URL=$VITE_N8N_URL
+ENV VITE_LLM_URL=$VITE_LLM_URL
+
 RUN npm run build
 
 # Production stage with Nginx
