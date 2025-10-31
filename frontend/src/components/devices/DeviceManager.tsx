@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { Button } from '../ui/button';
-import { Badge } from '../ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Edit, Trash2, Power, PowerOff, Settings } from 'lucide-react';
-import { DeviceForm } from '../forms/DeviceForm';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
-import { useToast } from '../ui/use-toast';
-import { api } from '../services/api';
+import { DeviceForm } from '@/components/forms/DeviceForm';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useToast } from '@/components/ui/use-toast';
+import { apiClient } from '@/services/api/ApiClient';
 
 interface Device {
   id: string;
