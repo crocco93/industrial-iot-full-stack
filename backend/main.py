@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 import uvicorn
 import os
 from dotenv import load_dotenv
-from datetime import datetime  # ✅ DODANE
+from datetime import datetime
 from database.mongodb import init_database, close_database
-from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points
+from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations
 from services.protocol_manager import protocol_manager
 from services.websocket_manager import start_websocket_heartbeat
 
@@ -60,13 +60,13 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="Industrial Protocols Management API",
-    description="Comprehensive backend API for managing industrial communication protocols including Modbus, OPC-UA, Profinet, EtherNet/IP, MQTT, CANopen, and BACnet",
+    description="Comprehensive backend API for managing industrial communication protocols including Modbus, OPC-UA, Profinet, EtherNet/IP, MQTT, CANopen, and BACnet with N8N and Ollama LLM integration",
     version="1.0.0",
     lifespan=lifespan
 )
 
 # CORS middleware
-origins_str = os.getenv("CORS_ORIGINS", '["http://localhost:3000","http://localhost:5173"]')
+origins_str = os.getenv("CORS_ORIGINS", '["http://localhost:3000","http://localhost:5173","http://localhost:80","http://localhost"]')
 
 # Parse the origins string
 origins = []
@@ -96,6 +96,7 @@ app.include_router(security.router, prefix="/api", tags=["security"])
 app.include_router(settings.router, prefix="/api", tags=["settings"])
 app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 app.include_router(data_points.router, prefix="/api", tags=["data-points"])
+app.include_router(integrations.router, prefix="/api", tags=["integrations"])  # ✅ DODANE
 
 # Root endpoints
 @app.get("/")
@@ -104,7 +105,7 @@ async def root():
     return {
         "message": "Industrial Protocols Management API",
         "version": "1.0.0",
-        "description": "Backend API for managing industrial communication protocols",
+        "description": "Backend API for managing industrial communication protocols with N8N and LLM integration",
         "supported_protocols": [
             "Modbus TCP",
             "OPC-UA",
@@ -113,6 +114,10 @@ async def root():
             "MQTT",
             "CANopen",
             "BACnet"
+        ],
+        "integrations": [
+            "N8N Workflow Automation",
+            "Ollama LLM Assistant"
         ],
         "documentation": "/docs",
         "openapi": "/openapi.json"
@@ -132,7 +137,7 @@ async def health_check():
         return {
             "status": "healthy",
             "message": "Industrial Protocols Management API is running",
-            "timestamp": datetime.utcnow().isoformat() + "Z",  # ✅ POPRAWIONE
+            "timestamp": datetime.utcnow().isoformat() + "Z",
             "services": {
                 "database": "connected",
                 "protocol_manager": "running",
@@ -155,8 +160,8 @@ async def api_status():
         protocol_status = protocol_manager.get_all_protocol_status()
         
         # Get protocol service status
-        from services.protocol_services import get_protocol_service_status
-        service_status = get_protocol_service_status()
+        from services.protocol_services import get_available_protocols
+        available_protocols = get_available_protocols()
         
         # Get database statistics
         try:
@@ -169,7 +174,7 @@ async def api_status():
             
             # Recent monitoring data (last hour)
             from datetime import timedelta
-            one_hour_ago = datetime.utcnow() - timedelta(hours=1)  # ✅ POPRAWIONE
+            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
             recent_monitoring = await MonitoringData.find(
                 MonitoringData.timestamp >= one_hour_ago
             ).count()
@@ -191,12 +196,12 @@ async def api_status():
         return {
             "api_version": "1.0.0",
             "status": "operational",
-            "timestamp": datetime.utcnow().isoformat() + "Z",  # ✅ DODANE
+            "timestamp": datetime.utcnow().isoformat() + "Z",
             "protocol_manager": {
                 "running_protocols": len(protocol_status),
                 "protocol_details": protocol_status
             },
-            "protocol_services": service_status,
+            "available_protocols": available_protocols,
             "database_statistics": db_stats
         }
     except Exception as e:
@@ -209,6 +214,7 @@ if __name__ == "__main__":
     
     print(f"🔧 Starting server on {host}:{port} in {environment} mode")
     print(f"📡 Supported protocols: Modbus TCP, OPC-UA, Profinet, EtherNet/IP, MQTT, CANopen, BACnet")
+    print(f"🔗 Integrations: N8N Workflows, Ollama LLM")
     print(f"🌐 API Documentation: http://{host}:{port}/docs")
     
     uvicorn.run(
