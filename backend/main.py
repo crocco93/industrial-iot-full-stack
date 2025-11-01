@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 from database.mongodb import init_database, close_database
-from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards, historical
+from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards, historical, alerts
 from services.protocol_manager import protocol_manager
 from services.websocket_manager import start_websocket_heartbeat
 
@@ -92,7 +92,8 @@ app.include_router(protocols.router, prefix="/api", tags=["protocols"])
 app.include_router(connections.router, prefix="/api", tags=["connections"])
 app.include_router(devices.router, prefix="/api", tags=["devices"])
 app.include_router(dashboards.router, prefix="/api", tags=["dashboards"])
-app.include_router(historical.router, prefix="/api", tags=["historical"])  # ✅ DODANE!
+app.include_router(historical.router, prefix="/api", tags=["historical"])
+app.include_router(alerts.router, prefix="/api", tags=["alerts"])  # ✅ DODANE
 app.include_router(monitoring.router, prefix="/api", tags=["monitoring"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
@@ -127,8 +128,10 @@ async def root():
             "Real-time Data Collection",
             "Historical Data Analysis",
             "Custom Dashboards",
+            "Advanced Alert Management",
             "Health Monitoring",
-            "Hierarchical Device Management"
+            "Hierarchical Device Management",
+            "WebSocket Real-time Updates"
         ],
         "documentation": "/docs",
         "openapi": "/openapi.json",
@@ -154,7 +157,8 @@ async def health_check():
             "services": {
                 "database": "connected",
                 "protocol_manager": "running",
-                "websocket_manager": "running"
+                "websocket_manager": "running",
+                "alert_system": "running"
             },
             "statistics": {
                 "active_protocols": len(protocol_status),
