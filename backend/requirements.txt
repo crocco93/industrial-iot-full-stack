@@ -26,6 +26,10 @@ aioredis==2.0.1
 
 # HTTP client for integrations (N8N, Ollama)
 httpx==0.25.2
+aiohttp==3.9.1
+
+# System monitoring and health checks
+psutil==5.9.6
 
 # Cryptography for security
 cryptography==41.0.7
