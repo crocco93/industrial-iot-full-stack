@@ -3,8 +3,10 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 from database.mongodb import get_database
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class LocationModel(BaseModel):
     id: Optional[str] = None
@@ -47,6 +49,160 @@ class LocationMoveRequest(BaseModel):
 # In-memory storage for development (would be MongoDB in production)
 locations_storage: Dict[str, LocationModel] = {}
 
+def create_sample_locations() -> List[LocationModel]:
+    """Create sample location hierarchy for development"""
+    now = datetime.utcnow()
+    
+    locations = [
+        # Root locations
+        LocationModel(
+            id="loc_factory_001",
+            name="Main Factory",
+            description="Primary manufacturing facility",
+            type="location",
+            parent_id=None,
+            address="Industrial District, Warsaw",
+            coordinates={"lat": 52.2297, "lng": 21.0122},
+            metadata={"capacity": 1000, "employees": 45},
+            order_index=0,
+            created_at=now,
+            updated_at=now
+        ),
+        LocationModel(
+            id="loc_warehouse_001",
+            name="Warehouse Complex",
+            description="Storage and logistics center",
+            type="location",
+            parent_id=None,
+            address="Logistics Park, Warsaw",
+            coordinates={"lat": 52.1500, "lng": 21.0000},
+            metadata={"area_sqm": 5000, "capacity_tons": 200},
+            order_index=1,
+            created_at=now,
+            updated_at=now
+        ),
+        
+        # Areas in Main Factory
+        LocationModel(
+            id="area_production_001",
+            name="Production Floor A",
+            description="Main production line - Assembly",
+            type="area",
+            parent_id="loc_factory_001",
+            metadata={"line_speed": "120 units/hour", "shift_workers": 12},
+            order_index=0,
+            created_at=now,
+            updated_at=now
+        ),
+        LocationModel(
+            id="area_production_002",
+            name="Production Floor B",
+            description="Secondary production line - Packaging",
+            type="area",
+            parent_id="loc_factory_001",
+            metadata={"line_speed": "90 units/hour", "shift_workers": 8},
+            order_index=1,
+            created_at=now,
+            updated_at=now
+        ),
+        LocationModel(
+            id="area_quality_001",
+            name="Quality Control Lab",
+            description="Quality assurance and testing laboratory",
+            type="area",
+            parent_id="loc_factory_001",
+            metadata={"test_capacity": "50 samples/day", "certification": "ISO 9001"},
+            order_index=2,
+            created_at=now,
+            updated_at=now
+        ),
+        LocationModel(
+            id="area_utilities_001",
+            name="Utilities & HVAC",
+            description="Power distribution, water, and HVAC systems",
+            type="area",
+            parent_id="loc_factory_001",
+            metadata={"power_capacity": "500kW", "backup_generator": True},
+            order_index=3,
+            created_at=now,
+            updated_at=now
+        ),
+        
+        # Areas in Warehouse
+        LocationModel(
+            id="area_receiving_001",
+            name="Receiving Bay",
+            description="Incoming goods reception and inspection",
+            type="area",
+            parent_id="loc_warehouse_001",
+            metadata={"dock_doors": 4, "max_truck_size": "40ft"},
+            order_index=0,
+            created_at=now,
+            updated_at=now
+        ),
+        LocationModel(
+            id="area_storage_001",
+            name="Main Storage Hall",
+            description="Primary storage area with automated systems",
+            type="area",
+            parent_id="loc_warehouse_001",
+            metadata={"rack_levels": 6, "automated_retrieval": True},
+            order_index=1,
+            created_at=now,
+            updated_at=now
+        ),
+        LocationModel(
+            id="area_shipping_001",
+            name="Shipping & Dispatch",
+            description="Outgoing goods preparation and dispatch",
+            type="area",
+            parent_id="loc_warehouse_001",
+            metadata={"loading_docks": 6, "daily_shipments": 150},
+            order_index=2,
+            created_at=now,
+            updated_at=now
+        )
+    ]
+    
+    return locations
+
+def build_location_tree(locations: List[LocationModel]) -> List[Dict[str, Any]]:
+    """Build hierarchical tree from flat list"""
+    location_dict = {loc.id: loc.dict() for loc in locations}
+    tree = []
+    
+    # First pass: add root locations
+    for loc in locations:
+        if loc.parent_id is None:
+            node = loc.dict()
+            node["children"] = []
+            tree.append(node)
+    
+    # Second pass: add children recursively
+    def add_children(parent_node: Dict[str, Any]):
+        for loc in locations:
+            if loc.parent_id == parent_node["id"]:
+                child_node = loc.dict()
+                child_node["children"] = []
+                parent_node["children"].append(child_node)
+                add_children(child_node)  # Recursive for deeper levels
+    
+    for node in tree:
+        add_children(node)
+    
+    return tree
+
+def find_node_in_tree(tree: List[Dict], node_id: str) -> Optional[Dict]:
+    """Find node in tree by ID"""
+    for node in tree:
+        if node["id"] == node_id:
+            return node
+        if "children" in node:
+            found = find_node_in_tree(node["children"], node_id)
+            if found:
+                return found
+    return None
+
 @router.get("/locations", response_model=List[LocationModel])
 async def get_locations(
     parent_id: Optional[str] = None,
@@ -76,12 +232,24 @@ async def get_locations(
             del loc["_id"]
             result.append(LocationModel(**loc))
         
-        # If no data in database, create sample hierarchy
+        # If no data in database, create and populate sample hierarchy
         if not result and parent_id is None:
+            logger.info("No locations in database, creating sample data...")
             sample_locations = create_sample_locations()
-            for loc in sample_locations:
-                locations_storage[loc.id] = loc
-            result = sample_locations
+            
+            # Save to database if possible
+            try:
+                for loc in sample_locations:
+                    location_dict = loc.dict()
+                    location_dict["_id"] = location_dict["id"]
+                    await locations_collection.insert_one(location_dict)
+                logger.info(f"Created {len(sample_locations)} sample locations in database")
+                result = sample_locations
+            except Exception as e:
+                logger.warning(f"Could not save to database, using in-memory: {e}")
+                for loc in sample_locations:
+                    locations_storage[loc.id] = loc
+                result = sample_locations
         
         # Build tree structure if requested
         if include_children and not flatten and parent_id is None:
@@ -90,7 +258,7 @@ async def get_locations(
         return result
         
     except Exception as e:
-        print(f"Database query failed, using in-memory: {e}")
+        logger.error(f"Database query failed, using in-memory: {e}")
         
         # Fallback to in-memory storage
         if not locations_storage and parent_id is None:
@@ -110,149 +278,6 @@ async def get_locations(
         filtered_locations.sort(key=lambda x: x.order_index)
         
         return filtered_locations
-
-def create_sample_locations() -> List[LocationModel]:
-    """Create sample location hierarchy for development"""
-    now = datetime.utcnow()
-    
-    locations = [
-        # Root locations
-        LocationModel(
-            id="loc_factory_001",
-            name="Main Factory",
-            description="Primary manufacturing facility",
-            type="location",
-            parent_id=None,
-            address="Industrial District, Warsaw",
-            coordinates={"lat": 52.2297, "lng": 21.0122},
-            order_index=0,
-            created_at=now,
-            updated_at=now
-        ),
-        LocationModel(
-            id="loc_warehouse_001",
-            name="Warehouse Complex",
-            description="Storage and logistics center",
-            type="location",
-            parent_id=None,
-            address="Logistics Park, Warsaw",
-            coordinates={"lat": 52.1500, "lng": 21.0000},
-            order_index=1,
-            created_at=now,
-            updated_at=now
-        ),
-        
-        # Areas in Main Factory
-        LocationModel(
-            id="area_production_001",
-            name="Production Floor A",
-            description="Main production line",
-            type="area",
-            parent_id="loc_factory_001",
-            order_index=0,
-            created_at=now,
-            updated_at=now
-        ),
-        LocationModel(
-            id="area_production_002",
-            name="Production Floor B",
-            description="Secondary production line",
-            type="area",
-            parent_id="loc_factory_001",
-            order_index=1,
-            created_at=now,
-            updated_at=now
-        ),
-        LocationModel(
-            id="area_quality_001",
-            name="Quality Control",
-            description="Quality assurance and testing",
-            type="area",
-            parent_id="loc_factory_001",
-            order_index=2,
-            created_at=now,
-            updated_at=now
-        ),
-        LocationModel(
-            id="area_utilities_001",
-            name="Utilities",
-            description="Power, water, HVAC systems",
-            type="area",
-            parent_id="loc_factory_001",
-            order_index=3,
-            created_at=now,
-            updated_at=now
-        ),
-        
-        # Areas in Warehouse
-        LocationModel(
-            id="area_receiving_001",
-            name="Receiving Bay",
-            description="Incoming goods reception",
-            type="area",
-            parent_id="loc_warehouse_001",
-            order_index=0,
-            created_at=now,
-            updated_at=now
-        ),
-        LocationModel(
-            id="area_storage_001",
-            name="Main Storage",
-            description="Primary storage area",
-            type="area",
-            parent_id="loc_warehouse_001",
-            order_index=1,
-            created_at=now,
-            updated_at=now
-        ),
-        LocationModel(
-            id="area_shipping_001",
-            name="Shipping Bay",
-            description="Outgoing goods dispatch",
-            type="area",
-            parent_id="loc_warehouse_001",
-            order_index=2,
-            created_at=now,
-            updated_at=now
-        )
-    ]
-    
-    return locations
-
-def build_location_tree(locations: List[LocationModel]) -> List[Dict[str, Any]]:
-    """Build hierarchical tree from flat list"""
-    location_dict = {loc.id: loc.dict() for loc in locations}
-    tree = []
-    
-    for loc in locations:
-        if loc.parent_id is None:
-            # Root location
-            node = loc.dict()
-            node["children"] = []
-            tree.append(node)
-    
-    # Add children
-    for loc in locations:
-        if loc.parent_id is not None:
-            # Find parent in tree
-            parent_node = find_node_in_tree(tree, loc.parent_id)
-            if parent_node:
-                child_node = loc.dict()
-                child_node["children"] = []
-                parent_node["children"].append(child_node)
-    
-    return tree
-
-def find_node_in_tree(tree: List[Dict], node_id: str) -> Optional[Dict]:
-    """Find node in tree by ID"""
-    for node in tree:
-        if node["id"] == node_id:
-            return node
-        if "children" in node:
-            found = find_node_in_tree(node["children"], node_id)
-            if found:
-                return found
-    return None
 
 @router.get("/locations/tree")
 async def get_location_tree():
@@ -300,13 +325,15 @@ async def create_location(location_data: LocationCreateRequest):
             location_dict = location.dict()
             location_dict["_id"] = location_dict["id"]
             await db.locations.insert_one(location_dict)
+            logger.info(f"Created location {location.name} in database")
         except Exception as e:
-            print(f"Database save failed, using in-memory: {e}")
+            logger.warning(f"Database save failed, using in-memory: {e}")
             locations_storage[location.id] = location
         
         return location
         
     except Exception as e:
+        logger.error(f"Failed to create location: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/locations/{location_id}", response_model=LocationModel)
@@ -314,89 +341,116 @@ async def update_location(location_id: str, update_data: LocationUpdateRequest):
     """Update existing location"""
     try:
         # Get existing location
-        db = get_database()
-        existing = await db.locations.find_one({"_id": location_id})
+        try:
+            db = get_database()
+            existing = await db.locations.find_one({"_id": location_id})
+            
+            if existing:
+                # Update in database
+                update_dict = update_data.dict(exclude_none=True)
+                update_dict["updated_at"] = datetime.utcnow()
+                
+                await db.locations.update_one(
+                    {"_id": location_id},
+                    {"$set": update_dict}
+                )
+                
+                # Reload from database
+                updated = await db.locations.find_one({"_id": location_id})
+                updated["id"] = str(updated["_id"])
+                del updated["_id"]
+                result = LocationModel(**updated)
+                
+                logger.info(f"Updated location {location_id} in database")
+                return result
+                
+        except Exception as db_error:
+            logger.warning(f"Database update failed: {db_error}")
         
-        if not existing:
-            if location_id not in locations_storage:
-                raise HTTPException(status_code=404, detail="Location not found")
-            existing_location = locations_storage[location_id]
-        else:
-            existing["id"] = str(existing["_id"])
-            del existing["_id"]
-            existing_location = LocationModel(**existing)
+        # Fallback to in-memory
+        if location_id not in locations_storage:
+            raise HTTPException(status_code=404, detail="Location not found")
         
-        # Update fields
+        existing_location = locations_storage[location_id]
         update_dict = update_data.dict(exclude_none=True)
         update_dict["updated_at"] = datetime.utcnow()
         
-        if existing:
-            await db.locations.update_one(
-                {"_id": location_id},
-                {"$set": update_dict}
-            )
-            
-            # Reload from database
-            updated = await db.locations.find_one({"_id": location_id})
-            updated["id"] = str(updated["_id"])
-            del updated["_id"]
-            result = LocationModel(**updated)
-        else:
-            # Update in-memory
-            for key, value in update_dict.items():
-                setattr(existing_location, key, value)
-            result = existing_location
-            locations_storage[location_id] = result
+        for key, value in update_dict.items():
+            setattr(existing_location, key, value)
         
-        return result
+        locations_storage[location_id] = existing_location
+        logger.info(f"Updated location {location_id} in memory")
+        
+        return existing_location
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to update location {location_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/locations/{location_id}")
 async def delete_location(location_id: str):
     """Delete location and all its children"""
     try:
-        db = get_database()
+        deleted_count = 0
         
-        # First, find all children to delete
-        children = await db.locations.find({"parent_id": location_id}).to_list(length=1000)
-        child_ids = [str(child["_id"]) for child in children]
-        
-        # Delete all children first (recursive)
-        for child_id in child_ids:
-            await delete_location(child_id)
-        
-        # Delete the location itself
-        result = await db.locations.delete_one({"_id": location_id})
-        
-        if result.deleted_count == 0:
-            if location_id in locations_storage:
-                # Also delete children from in-memory
-                to_delete = [location_id]
-                for loc_id, loc in locations_storage.items():
-                    if loc.parent_id == location_id:
-                        to_delete.append(loc_id)
-                
-                for del_id in to_delete:
-                    if del_id in locations_storage:
-                        del locations_storage[del_id]
-                
-                return {"success": True, "message": "Location deleted"}
+        # ✅ FIXED: Proper async function to delete recursively
+        async def delete_location_recursive(loc_id: str) -> int:
+            count = 0
             
+            try:
+                # Try database first
+                db = get_database()
+                
+                # Find and delete children first
+                children_cursor = db.locations.find({"parent_id": loc_id})
+                children = await children_cursor.to_list(length=1000)
+                
+                for child in children:
+                    child_id = str(child["_id"])
+                    count += await delete_location_recursive(child_id)
+                
+                # Delete the location itself from database
+                result = await db.locations.delete_one({"_id": loc_id})
+                if result.deleted_count > 0:
+                    count += 1
+                    logger.info(f"Deleted location {loc_id} from database")
+                
+            except Exception as db_error:
+                logger.warning(f"Database delete failed for {loc_id}: {db_error}")
+            
+            # Also delete from in-memory storage
+            if loc_id in locations_storage:
+                # Find and delete children from memory
+                children_in_memory = [loc.id for loc in locations_storage.values() if loc.parent_id == loc_id]
+                for child_id in children_in_memory:
+                    if child_id in locations_storage:
+                        del locations_storage[child_id]
+                        count += 1
+                
+                del locations_storage[loc_id]
+                count += 1
+                logger.info(f"Deleted location {loc_id} from memory")
+            
+            return count
+        
+        # Start recursive deletion
+        deleted_count = await delete_location_recursive(location_id)
+        
+        if deleted_count == 0:
             raise HTTPException(status_code=404, detail="Location not found")
         
-        # Also remove from in-memory if exists
-        if location_id in locations_storage:
-            del locations_storage[location_id]
-        
-        return {"success": True, "message": "Location and all children deleted"}
+        return {
+            "success": True,
+            "message": f"Location and {deleted_count - 1} children deleted",
+            "deleted_count": deleted_count
+        }
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to delete location {location_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/locations/{location_id}/move")
@@ -433,6 +487,7 @@ async def move_location(location_id: str, move_data: LocationMoveRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to move location {location_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/locations/{location_id}/children", response_model=List[LocationModel])
@@ -445,45 +500,79 @@ async def get_location_devices(location_id: str):
     """Get all devices in this location and its children"""
     try:
         # This would integrate with devices API
-        # For now, return placeholder
+        # For now, return mock devices for demonstration
+        mock_devices = [
+            {
+                "id": f"dev_{location_id}_001",
+                "name": "Temperature Sensor",
+                "type": "sensor",
+                "status": "online",
+                "protocol": "modbus-tcp",
+                "last_seen": datetime.utcnow().isoformat()
+            },
+            {
+                "id": f"dev_{location_id}_002",
+                "name": "Pressure Monitor", 
+                "type": "sensor",
+                "status": "online",
+                "protocol": "opc-ua",
+                "last_seen": datetime.utcnow().isoformat()
+            }
+        ] if location_id in ['area_production_001', 'area_production_002'] else []
+        
         return {
             "location_id": location_id,
-            "devices": [],
-            "message": "Device integration pending"
+            "devices": mock_devices,
+            "device_count": len(mock_devices),
+            "message": "Mock devices - real integration coming soon"
         }
     except Exception as e:
+        logger.error(f"Failed to get devices for location {location_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/locations/stats")
 async def get_location_stats():
     """Get location statistics"""
     try:
-        db = get_database()
-        
-        # Count by type
-        pipeline = [
-            {"$match": {"status": "active"}},
-            {"$group": {"_id": "$type", "count": {"$sum": 1}}}
-        ]
-        
-        stats_cursor = db.locations.aggregate(pipeline)
-        stats_data = await stats_cursor.to_list(length=100)
-        
         stats = {
             "total": 0,
             "locations": 0,
-            "areas": 0
+            "areas": 0,
+            "active": 0,
+            "inactive": 0
         }
         
-        for stat in stats_data:
-            loc_type = stat["_id"]
-            count = stat["count"]
-            stats["total"] += count
+        try:
+            db = get_database()
             
-            if loc_type == "location":
-                stats["locations"] += count
-            elif loc_type == "area":
-                stats["areas"] += count
+            # Count by type and status
+            pipeline = [
+                {"$group": {
+                    "_id": {"type": "$type", "status": "$status"}, 
+                    "count": {"$sum": 1}
+                }}
+            ]
+            
+            stats_cursor = db.locations.aggregate(pipeline)
+            stats_data = await stats_cursor.to_list(length=100)
+            
+            for stat in stats_data:
+                group = stat["_id"]
+                count = stat["count"]
+                stats["total"] += count
+                
+                if group["type"] == "location":
+                    stats["locations"] += count
+                elif group["type"] == "area":
+                    stats["areas"] += count
+                    
+                if group["status"] == "active":
+                    stats["active"] += count
+                else:
+                    stats["inactive"] += count
+                    
+        except Exception as db_error:
+            logger.warning(f"Database stats failed: {db_error}")
         
         # If no database data, use in-memory
         if stats["total"] == 0 and locations_storage:
@@ -493,8 +582,14 @@ async def get_location_stats():
                     stats["locations"] += 1
                 elif loc.type == "area":
                     stats["areas"] += 1
+                    
+                if loc.status == "active":
+                    stats["active"] += 1
+                else:
+                    stats["inactive"] += 1
         
         return stats
         
     except Exception as e:
+        logger.error(f"Failed to get location stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
