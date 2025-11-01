@@ -65,26 +65,39 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware
-origins_str = os.getenv("CORS_ORIGINS", '["http://localhost:3000","http://localhost:5173","http://localhost:80","http://localhost"]')
+# 🔥 FIXED CORS Configuration
+CORS_ORIGINS = [
+    "http://localhost:3000",   # React dev server
+    "http://localhost:5173",   # Vite dev server
+    "http://localhost:80",     # Docker frontend ✅ DODANE
+    "http://localhost",        # Docker frontend alternative
+    "http://frontend:80",      # Docker internal network
+    "http://127.0.0.1:3000",   # Alternative localhost
+    "http://127.0.0.1:5173",   # Alternative localhost
+    "http://127.0.0.1:80",     # Alternative localhost
+    "http://127.0.0.1",        # Alternative localhost
+]
 
-# Parse the origins string
-origins = []
-if origins_str.startswith('[') and origins_str.endswith(']'):
-    # Remove brackets and quotes, then split by comma
-    origins_clean = origins_str[1:-1].replace('"', '').replace("'", "")
-    origins = [origin.strip() for origin in origins_clean.split(',') if origin.strip()]
-else:
-    origins = [origins_str]
+# Add custom origins from environment
+if os.getenv("CORS_ORIGINS"):
+    env_origins = os.getenv("CORS_ORIGINS", "")
+    if env_origins.startswith('[') and env_origins.endswith(']'):
+        # Parse array format
+        env_origins = env_origins[1:-1].replace('"', '').replace("'", "")
+        custom_origins = [origin.strip() for origin in env_origins.split(',') if origin.strip()]
+        CORS_ORIGINS.extend(custom_origins)
+    else:
+        CORS_ORIGINS.append(env_origins)
 
-print(f"🌐 CORS origins configured: {origins}")
+print(f"🌐 CORS origins configured: {CORS_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=CORS_ORIGINS,  # ✅ FIXED - teraz zawiera localhost:80
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+    expose_headers=["*"], # Expose all headers to frontend
 )
 
 # Include API routers
@@ -252,6 +265,7 @@ if __name__ == "__main__":
     print(f"🔗 Integrations: N8N Workflows, Ollama LLM")
     print(f"🌐 API Documentation: http://{host}:{port}/docs")
     print(f"🏥 Health Check: http://{host}:{port}/health")
+    print(f"🔧 CORS enabled for: {CORS_ORIGINS}")
     
     uvicorn.run(
         "main:app",
