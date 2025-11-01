@@ -93,6 +93,8 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    console.log('[AddProtocolDialog] Form submitted:', formData);
+    
     if (!formData.name || !formData.type) {
       toast({
         title: "Validation Error",
@@ -110,10 +112,16 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
         created_at: new Date().toISOString()
       };
 
-      await api.post('/api/protocols', protocolData);
+      console.log('[AddProtocolDialog] POST /api/protocols');
+      console.log(protocolData);
+
+      // Use the API object directly - this should fix the "me.post is not a function" error
+      const response = await api.post('/api/protocols', protocolData);
+      
+      console.log('[AddProtocolDialog] Protocol created successfully:', response.data);
       
       toast({
-        title: "Protocol Added",
+        title: "Success",
         description: `${formData.name} protocol has been created successfully`
       });
       
@@ -130,7 +138,7 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
       });
       
     } catch (error: any) {
-      console.error('Error creating protocol:', error);
+      console.error('[AddProtocolDialog] submit error', error);
       toast({
         title: "Error",
         description: error.response?.data?.detail || "Failed to create protocol",
@@ -184,7 +192,7 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
             return (
               <div key={field}>
                 <Label htmlFor={field}>Quality of Service</Label>
-                <Select value={currentValue} onValueChange={(value) => updateConfiguration(field, parseInt(value))}>
+                <Select value={currentValue.toString()} onValueChange={(value) => updateConfiguration(field, parseInt(value))}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select QoS" />
                   </SelectTrigger>
@@ -205,10 +213,12 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
             : 'text';
           
           const placeholder = field === 'host' ? '192.168.1.100'
-            : field === 'port' ? selectedProtocolType.port?.toString() || ''
+            : field === 'port' ? selectedProtocolType.port?.toString() || '502'
             : field === 'endpoint_url' ? 'opc.tcp://192.168.1.100:4840'
             : field === 'broker_host' ? '192.168.1.100'
+            : field === 'broker_port' ? '1883'
             : field === 'can_interface' ? 'can0'
+            : field === 'timeout' ? '5000'
             : `Enter ${field.replace(/_/g, ' ')}`;
           
           return (
@@ -231,23 +241,45 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
             </div>
           );
         })}
+        
+        {/* Advanced Configuration */}
+        <div className="mt-6 pt-4 border-t">
+          <h5 className="text-sm font-medium mb-2">Advanced Settings</h5>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="retry_count">Retry Count</Label>
+              <Input
+                id="retry_count"
+                type="number"
+                value={formData.configuration.retry_count || 3}
+                onChange={(e) => updateConfiguration('retry_count', parseInt(e.target.value) || 3)}
+                placeholder="3"
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="connection_timeout">Connection Timeout (ms)</Label>
+              <Input
+                id="connection_timeout"
+                type="number"
+                value={formData.configuration.connection_timeout || 5000}
+                onChange={(e) => updateConfiguration('connection_timeout', parseInt(e.target.value) || 5000)}
+                placeholder="5000"
+              />
+            </div>
+          </div>
+        </div>
       </div>
     );
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-    // zamykaj tylko gdy ktoś kliknie w tło / ESC
-      if (!v) onClose();
-    }}
-    >
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add New Protocol</DialogTitle>
           <DialogDescription>
-            Configure a new industrial communication protocol
+            Configure a new industrial communication protocol for device connectivity
           </DialogDescription>
         </DialogHeader>
         
@@ -279,6 +311,7 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
             <div>
               <Label htmlFor="type">Protocol Type *</Label>
               <Select value={formData.type} onValueChange={(value) => {
+                console.log('[AddProtocolDialog] Protocol type selected:', value);
                 setFormData(prev => ({ 
                   ...prev, 
                   type: value,
