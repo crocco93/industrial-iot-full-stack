@@ -1,68 +1,211 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { 
   ChevronRight, 
   ChevronDown, 
-  Search, 
-  Plus, 
-  Trash2, 
-  Edit, 
-  Move, 
-  RefreshCw,
-  Building,
-  Factory,
-  Cpu,
-  Zap,
-  Activity,
-  Settings
+  MapPin, 
+  Building2, 
+  Cpu, 
+  Database,
+  Plus,
+  Search,
+  MoreHorizontal,
+  Edit,
+  Trash2,
+  Settings,
+  AlertTriangle,
+  CheckCircle,
+  Clock,
+  RefreshCw
 } from 'lucide-react';
-import { api } from '@/services/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { api } from '@/services/api';
 
 interface TreeNode {
   id: string;
   name: string;
   type: 'location' | 'area' | 'device' | 'data_point';
+  description?: string;
   parent_id?: string;
+  status?: 'active' | 'inactive' | 'error' | 'warning';
   children: TreeNode[];
-  status?: string;
-  online?: boolean;
-  device_type?: 'infrastructure' | 'production';
-  protocol_type?: string;
-  current_value?: any;
-  unit?: string;
-  last_read?: string;
+  device_count?: number;
+  active_device_count?: number;
+  alert_count?: number;
   metadata?: Record<string, any>;
+  order_index?: number;
 }
 
 interface HierarchicalTreeProps {
+  collapsible?: boolean;
   onNodeSelect?: (node: TreeNode) => void;
   onNodeEdit?: (node: TreeNode) => void;
   onNodeDelete?: (node: TreeNode) => void;
-  onNodeMove?: (nodeId: string, newParentId: string) => void;
-  allowEdit?: boolean;
-  allowDragDrop?: boolean;
-  showAddButtons?: boolean;
+  onNodeMove?: (nodeId: string, newParentId: string | null, newIndex: number) => void;
+  showCounts?: boolean;
+  showStatus?: boolean;
+  searchable?: boolean;
 }
 
-export function HierarchicalTree({ 
-  onNodeSelect, 
-  onNodeEdit, 
-  onNodeDelete, 
+interface AddNodeDialogProps {
+  open: boolean;
+  onClose: () => void;
+  parentId?: string;
+  nodeType: 'location' | 'area';
+  onSuccess: () => void;
+}
+
+function AddNodeDialog({ open, onClose, parentId, nodeType, onSuccess }: AddNodeDialogProps) {
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    address: '',
+    manager: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const { toast } = useToast();
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!formData.name.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Name is required",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      await api.post('/api/locations', {
+        name: formData.name,
+        description: formData.description,
+        type: nodeType,
+        parent_id: parentId || null,
+        address: formData.address,
+        metadata: {
+          manager: formData.manager
+        }
+      });
+      
+      toast({
+        title: "Success",
+        description: `${nodeType === 'location' ? 'Location' : 'Area'} created successfully`
+      });
+      
+      onSuccess();
+      onClose();
+      setFormData({ name: '', description: '', address: '', manager: '' });
+      
+    } catch (error: any) {
+      console.error('Error creating node:', error);
+      toast({
+        title: "Error",
+        description: error.response?.data?.detail || `Failed to create ${nodeType}`,
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Add New {nodeType === 'location' ? 'Location' : 'Area'}
+          </DialogTitle>
+        </DialogHeader>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <Label htmlFor="name">Name *</Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+              placeholder={nodeType === 'location' ? 'Factory name' : 'Area name'}
+              required
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+              placeholder="Description..."
+              rows={2}
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="address">Address</Label>
+            <Input
+              id="address"
+              value={formData.address}
+              onChange={(e) => setFormData(prev => ({ ...prev, address: e.target.value }))}
+              placeholder="Physical address"
+            />
+          </div>
+          
+          <div>
+            <Label htmlFor="manager">Manager</Label>
+            <Input
+              id="manager"
+              value={formData.manager}
+              onChange={(e) => setFormData(prev => ({ ...prev, manager: e.target.value }))}
+              placeholder="Responsible person"
+            />
+          </div>
+          
+          <div className="flex justify-end space-x-2 pt-4">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading}>
+              {loading ? 'Creating...' : 'Create'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export const HierarchicalTree: React.FC<HierarchicalTreeProps> = ({
+  collapsible = true,
+  onNodeSelect,
+  onNodeEdit,
+  onNodeDelete,
   onNodeMove,
-  allowEdit = true,
-  allowDragDrop = true,
-  showAddButtons = true
-}: HierarchicalTreeProps) {
+  showCounts = true,
+  showStatus = true,
+  searchable = true
+}) => {
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
-  const [draggedNode, setDraggedNode] = useState<TreeNode | null>(null);
-  const [dragOverNode, setDragOverNode] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [draggedNode, setDraggedNode] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [addDialogConfig, setAddDialogConfig] = useState<{
+    parentId?: string;
+    nodeType: 'location' | 'area';
+  }>({ nodeType: 'location' });
+  
   const { toast } = useToast();
 
   useEffect(() => {
@@ -71,138 +214,200 @@ export function HierarchicalTree({
 
   const loadTreeData = async () => {
     try {
-      // Load all data
-      const [devicesResponse, dataPointsResponse] = await Promise.all([
-        api.get('/api/devices/tree?include_data_points=true'),
-        api.get('/api/data-points')
-      ]);
+      setLoading(true);
       
-      const devices = devicesResponse.data || [];
-      const dataPoints = dataPointsResponse.data || [];
+      // Load locations/areas first
+      const locationsResponse = await api.get('/api/locations/tree');
+      const locations = locationsResponse.data || [];
       
-      // Build hierarchical structure
-      const tree = buildHierarchy(devices, dataPoints);
-      setTreeData(tree);
+      if (locations.length === 0) {
+        // Create sample locations if none exist
+        await createSampleLocations();
+        const retryResponse = await api.get('/api/locations/tree');
+        const enrichedTree = await enrichTreeWithDevices(retryResponse.data || []);
+        setTreeData(enrichedTree);
+      } else {
+        // Enrich with devices and data points
+        const enrichedTree = await enrichTreeWithDevices(locations);
+        setTreeData(enrichedTree);
+      }
       
-      // Auto-expand first level
-      const firstLevelIds = tree.map(node => node.id);
-      setExpandedNodes(new Set(firstLevelIds));
+      // Auto-expand root nodes
+      const rootIds = (locations.length > 0 ? locations : treeData).map((node: TreeNode) => node.id);
+      setExpandedNodes(new Set(rootIds));
       
     } catch (error) {
       console.error('Error loading tree data:', error);
       toast({
-        title: "Error",
-        description: "Failed to load device hierarchy",
+        title: "Loading Error",
+        description: "Failed to load hierarchy tree",
         variant: "destructive"
       });
+      
+      // Fallback to sample data
+      setTreeData(getSampleTreeData());
     } finally {
       setLoading(false);
     }
   };
-
-  const buildHierarchy = (devices: any[], dataPoints: any[]): TreeNode[] => {
-    // Group by location, then area, then device
-    const locationMap = new Map<string, TreeNode>();
-    const areaMap = new Map<string, TreeNode>();
-    const deviceMap = new Map<string, TreeNode>();
-    
-    // Create location nodes
-    devices.forEach(device => {
-      const locationId = device.location_id || 'default_location';
-      const locationName = device.location_id || 'Default Location';
+  
+  const createSampleLocations = async () => {
+    try {
+      // Create main factory location
+      const factoryResponse = await api.post('/api/locations', {
+        name: 'Main Factory',
+        description: 'Primary manufacturing facility',
+        type: 'location',
+        address: 'Industrial District, Warsaw',
+        metadata: {
+          manager: 'Production Manager',
+          coordinates: { lat: 52.2297, lng: 21.0122 }
+        }
+      });
       
-      if (!locationMap.has(locationId)) {
-        locationMap.set(locationId, {
-          id: locationId,
-          name: locationName,
-          type: 'location',
-          children: [],
-          metadata: { device_count: 0 }
-        });
-      }
-    });
-    
-    // Create area nodes
-    devices.forEach(device => {
-      const locationId = device.location_id || 'default_location';
-      const areaId = device.area_id || 'default_area';
-      const areaName = device.area_id || 'Default Area';
+      const factoryId = factoryResponse.data.id;
       
-      const areaKey = `${locationId}_${areaId}`;
-      if (!areaMap.has(areaKey)) {
-        areaMap.set(areaKey, {
-          id: areaKey,
-          name: areaName,
+      // Create areas within factory
+      await Promise.all([
+        api.post('/api/locations', {
+          name: 'Production Floor A',
+          description: 'Main production line',
           type: 'area',
-          parent_id: locationId,
-          children: [],
-          metadata: { location_id: locationId, area_id: areaId, device_count: 0 }
-        });
+          parent_id: factoryId,
+          metadata: { manager: 'Floor Supervisor A' }
+        }),
+        api.post('/api/locations', {
+          name: 'Production Floor B',
+          description: 'Secondary production line',
+          type: 'area',
+          parent_id: factoryId,
+          metadata: { manager: 'Floor Supervisor B' }
+        }),
+        api.post('/api/locations', {
+          name: 'Quality Control',
+          description: 'Quality assurance and testing',
+          type: 'area',
+          parent_id: factoryId,
+          metadata: { manager: 'QC Manager' }
+        })
+      ]);
+      
+    } catch (error) {
+      console.error('Error creating sample locations:', error);
+    }
+  };
+  
+  const enrichTreeWithDevices = async (locations: TreeNode[]): Promise<TreeNode[]> => {
+    try {
+      // Get all devices
+      const devicesResponse = await api.get('/api/devices');
+      const devices = devicesResponse.data || [];
+      
+      // Get all data points
+      const dataPointsResponse = await api.get('/api/data-points');
+      const dataPoints = dataPointsResponse.data || [];
+      
+      // Build device nodes with data points
+      const deviceNodes: Record<string, TreeNode[]> = {};
+      
+      devices.forEach((device: any) => {
+        const deviceDataPoints = dataPoints
+          .filter((dp: any) => dp.device_id === device.id)
+          .map((dp: any) => ({
+            id: dp.id,
+            name: dp.name,
+            type: 'data_point' as const,
+            description: `${dp.data_type} - ${dp.unit || 'N/A'}`,
+            parent_id: device.id,
+            status: dp.status,
+            children: [],
+            metadata: {
+              value: dp.current_value,
+              unit: dp.unit,
+              data_type: dp.data_type,
+              address: dp.address
+            }
+          }));
         
-        // Add area to location
-        const location = locationMap.get(locationId);
-        if (location) {
-          location.children.push(areaMap.get(areaKey)!);
+        const deviceNode: TreeNode = {
+          id: device.id,
+          name: device.name,
+          type: 'device',
+          description: device.description,
+          parent_id: device.location_id || device.area_id,
+          status: device.status,
+          children: deviceDataPoints
+        };
+        
+        const parentKey = device.location_id || device.area_id || 'orphaned';
+        if (!deviceNodes[parentKey]) {
+          deviceNodes[parentKey] = [];
         }
-      }
-    });
-    
-    // Create device nodes
-    devices.forEach(device => {
-      const locationId = device.location_id || 'default_location';
-      const areaId = device.area_id || 'default_area';
-      const areaKey = `${locationId}_${areaId}`;
+        deviceNodes[parentKey].push(deviceNode);
+      });
       
-      // Get device data points
-      const deviceDataPoints = device.children || [];
-      const dataPointNodes: TreeNode[] = deviceDataPoints.map((dp: any) => ({
-        id: dp.id,
-        name: dp.name,
-        type: 'data_point' as const,
-        parent_id: device.id,
-        children: [],
-        current_value: dp.current_value,
-        unit: dp.unit,
-        last_read: dp.last_read,
-        metadata: {
-          address: dp.address,
-          data_type: dp.data_type
-        }
-      }));
-      
-      const deviceNode: TreeNode = {
-        id: device.id,
-        name: device.name,
-        type: 'device',
-        parent_id: areaKey,
-        children: dataPointNodes,
-        status: device.status,
-        online: device.online,
-        device_type: device.device_type,
-        protocol_type: device.metadata?.protocol_type,
-        metadata: {
-          vendor: device.metadata?.vendor,
-          model: device.metadata?.model,
-          address: device.metadata?.address,
-          reliability: device.metadata?.reliability
-        }
+      // Merge devices into location tree
+      const mergeDevicesIntoTree = (nodes: TreeNode[]): TreeNode[] => {
+        return nodes.map(node => {
+          const nodeDevices = deviceNodes[node.id] || [];
+          const enrichedChildren = node.children.length > 0 
+            ? mergeDevicesIntoTree(node.children)
+            : [];
+          
+          return {
+            ...node,
+            children: [...enrichedChildren, ...nodeDevices],
+            device_count: (node.device_count || 0) + nodeDevices.length,
+            active_device_count: (node.active_device_count || 0) + nodeDevices.filter(d => d.status === 'active').length
+          };
+        });
       };
       
-      // Add device to area
-      const area = areaMap.get(areaKey);
-      if (area) {
-        area.children.push(deviceNode);
-        area.metadata!.device_count++;
-      }
+      return mergeDevicesIntoTree(locations);
       
-      // Update location device count
-      const location = locationMap.get(locationId);
-      if (location) {
-        location.metadata!.device_count++;
+    } catch (error) {
+      console.error('Error enriching tree with devices:', error);
+      return locations;
+    }
+  };
+  
+  const getSampleTreeData = (): TreeNode[] => {
+    return [
+      {
+        id: 'loc_factory_001',
+        name: 'Main Factory',
+        type: 'location',
+        description: 'Primary manufacturing facility',
+        status: 'active',
+        device_count: 12,
+        active_device_count: 10,
+        alert_count: 2,
+        children: [
+          {
+            id: 'area_production_001',
+            name: 'Production Floor A',
+            type: 'area',
+            parent_id: 'loc_factory_001',
+            status: 'active',
+            device_count: 6,
+            active_device_count: 5,
+            alert_count: 1,
+            children: []
+          },
+          {
+            id: 'area_production_002',
+            name: 'Production Floor B', 
+            type: 'area',
+            parent_id: 'loc_factory_001',
+            status: 'active',
+            device_count: 4,
+            active_device_count: 3,
+            alert_count: 0,
+            children: []
+          }
+        ]
       }
-    });
-    
-    return Array.from(locationMap.values());
+    ];
   };
 
   const toggleNode = (nodeId: string) => {
@@ -217,321 +422,407 @@ export function HierarchicalTree({
     });
   };
 
-  const handleDragStart = (e: React.DragEvent, node: TreeNode) => {
-    if (!allowDragDrop || node.type === 'location') return;
-    
-    setDraggedNode(node);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', node.id);
+  const selectNode = (node: TreeNode) => {
+    setSelectedNode(node.id);
+    onNodeSelect?.(node);
   };
 
-  const handleDragOver = (e: React.DragEvent, node: TreeNode) => {
-    if (!allowDragDrop || !draggedNode) return;
+  const handleDragStart = (e: React.DragEvent, node: TreeNode) => {
+    if (node.type === 'device' || node.type === 'data_point') return; // Only allow location/area moves
     
+    setDraggedNode(node.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetNodeId: string) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    
-    // Only allow dropping on compatible parents
-    const canDrop = (
-      (draggedNode.type === 'area' && node.type === 'location') ||
-      (draggedNode.type === 'device' && node.type === 'area') ||
-      (draggedNode.type === 'data_point' && node.type === 'device')
-    );
-    
-    if (canDrop && node.id !== draggedNode.parent_id) {
-      setDragOverNode(node.id);
-    }
+    setDropTarget(targetNodeId);
   };
 
-  const handleDrop = async (e: React.DragEvent, targetNode: TreeNode) => {
-    if (!allowDragDrop || !draggedNode || !onNodeMove) return;
-    
+  const handleDragLeave = () => {
+    setDropTarget(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetNodeId: string) => {
     e.preventDefault();
-    setDragOverNode(null);
     
-    if (targetNode.id === draggedNode.parent_id) return;
-    
+    if (!draggedNode || draggedNode === targetNodeId) {
+      setDraggedNode(null);
+      setDropTarget(null);
+      return;
+    }
+
     try {
-      await onNodeMove(draggedNode.id, targetNode.id);
+      // Find target node
+      const targetNode = findNodeInTree(treeData, targetNodeId);
+      let newParentId: string | null = null;
+      
+      if (targetNode) {
+        if (targetNode.type === 'location') {
+          newParentId = targetNode.id;
+        } else if (targetNode.type === 'area') {
+          newParentId = targetNode.parent_id || null;
+        }
+      }
+      
+      // Call move API
+      await api.post(`/api/locations/${draggedNode}/move`, {
+        new_parent_id: newParentId,
+        new_order_index: 0
+      });
+      
+      // Reload tree
       await loadTreeData();
       
       toast({
-        title: "Node Moved",
-        description: `${draggedNode.name} moved to ${targetNode.name}`
+        title: "Moved",
+        description: "Node moved successfully"
       });
-    } catch (error) {
+      
+    } catch (error: any) {
+      console.error('Error moving node:', error);
       toast({
-        title: "Move Failed",
-        description: "Failed to move node",
+        title: "Error",
+        description: error.response?.data?.detail || "Failed to move node",
         variant: "destructive"
       });
     } finally {
       setDraggedNode(null);
+      setDropTarget(null);
     }
+  };
+
+  const handleDeleteNode = async (node: TreeNode) => {
+    if (!confirm(`Are you sure you want to delete "${node.name}" and all its children?`)) {
+      return;
+    }
+    
+    try {
+      await api.delete(`/api/locations/${node.id}`);
+      await loadTreeData();
+      
+      toast({
+        title: "Deleted",
+        description: `${node.name} has been deleted`
+      });
+      
+    } catch (error: any) {
+      console.error('Error deleting node:', error);
+      toast({
+        title: "Error",
+        description: error.response?.data?.detail || "Failed to delete node",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const findNodeInTree = (nodes: TreeNode[], nodeId: string): TreeNode | null => {
+    for (const node of nodes) {
+      if (node.id === nodeId) return node;
+      const found = findNodeInTree(node.children, nodeId);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  const filterTree = (nodes: TreeNode[], term: string): TreeNode[] => {
+    if (!term.trim()) return nodes;
+    
+    return nodes.reduce<TreeNode[]>((acc, node) => {
+      const matchesName = node.name.toLowerCase().includes(term.toLowerCase());
+      const filteredChildren = filterTree(node.children, term);
+      
+      if (matchesName || filteredChildren.length > 0) {
+        acc.push({
+          ...node,
+          children: filteredChildren
+        });
+        
+        // Auto-expand nodes that match or have matching children
+        if (matchesName || filteredChildren.length > 0) {
+          setExpandedNodes(prev => new Set([...prev, node.id]));
+        }
+      }
+      
+      return acc;
+    }, []);
   };
 
   const getNodeIcon = (node: TreeNode) => {
     switch (node.type) {
       case 'location':
-        return <Building className="h-4 w-4 text-blue-600" />;
+        return <MapPin className="h-4 w-4 text-blue-600" />;
       case 'area':
-        return <Factory className="h-4 w-4 text-green-600" />;
+        return <Building2 className="h-4 w-4 text-green-600" />;
       case 'device':
-        if (node.device_type === 'infrastructure') {
-          return <Zap className="h-4 w-4 text-purple-600" />;
-        }
-        return <Cpu className="h-4 w-4 text-orange-600" />;
+        return <Cpu className="h-4 w-4 text-purple-600" />;
       case 'data_point':
-        return <Activity className="h-4 w-4 text-gray-600" />;
+        return <Database className="h-4 w-4 text-orange-600" />;
       default:
-        return <Settings className="h-4 w-4 text-gray-400" />;
+        return <div className="h-4 w-4" />;
     }
   };
 
-  const getStatusBadge = (node: TreeNode) => {
-    if (node.type === 'device') {
-      if (node.online && node.status === 'active') {
-        return <Badge className="bg-green-100 text-green-800 text-xs">Online</Badge>;
-      }
-      if (node.status === 'error') {
-        return <Badge className="bg-red-100 text-red-800 text-xs">Error</Badge>;
-      }
-      return <Badge className="bg-gray-100 text-gray-800 text-xs">Offline</Badge>;
+  const getStatusIcon = (status?: string) => {
+    switch (status) {
+      case 'active':
+        return <CheckCircle className="h-3 w-3 text-green-500" />;
+      case 'error':
+        return <AlertTriangle className="h-3 w-3 text-red-500" />;
+      case 'warning':
+        return <AlertTriangle className="h-3 w-3 text-yellow-500" />;
+      case 'inactive':
+        return <Clock className="h-3 w-3 text-gray-500" />;
+      default:
+        return null;
     }
-    return null;
   };
 
-  const renderNode = (node: TreeNode, level: number = 0) => {
-    const hasChildren = node.children && node.children.length > 0;
-    const isExpanded = expandedNodes.has(node.id);
-    const isDragOver = dragOverNode === node.id;
-    
-    // Filter children based on search
-    const filteredChildren = node.children.filter(child => 
-      child.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      child.children.some(grandChild => 
-        grandChild.name.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    );
+  const renderNodeActions = (node: TreeNode) => {
+    const canAddChildren = node.type === 'location' || node.type === 'area';
     
     return (
-      <div key={node.id}>
-        <div 
-          className={`flex items-center space-x-2 p-2 rounded cursor-pointer hover:bg-gray-50 ${
-            isDragOver ? 'bg-blue-50 border-2 border-blue-300' : ''
-          }`}
-          style={{ paddingLeft: `${level * 20 + 8}px` }}
-          draggable={allowDragDrop && node.type !== 'location'}
-          onDragStart={(e) => handleDragStart(e, node)}
-          onDragOver={(e) => handleDragOver(e, node)}
-          onDrop={(e) => handleDrop(e, node)}
-          onDragLeave={() => setDragOverNode(null)}
-          onClick={() => onNodeSelect?.(node)}
-        >
-          {/* Expand/Collapse Button */}
-          {hasChildren ? (
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0">
+            <MoreHorizontal className="h-3 w-3" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-48 p-2">
+          <div className="space-y-1">
+            {canAddChildren && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="w-full justify-start"
+                onClick={() => {
+                  setAddDialogConfig({
+                    parentId: node.id,
+                    nodeType: 'area'
+                  });
+                  setShowAddDialog(true);
+                }}
+              >
+                <Plus className="h-3 w-3 mr-2" />
+                Add Area
+              </Button>
+            )}
+            
             <Button
               size="sm"
               variant="ghost"
-              className="h-6 w-6 p-0"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleNode(node.id);
-              }}
+              className="w-full justify-start"
+              onClick={() => onNodeEdit?.(node)}
             >
-              {isExpanded ? 
-                <ChevronDown className="h-3 w-3" /> : 
-                <ChevronRight className="h-3 w-3" />
-              }
+              <Edit className="h-3 w-3 mr-2" />
+              Edit
             </Button>
-          ) : (
-            <div className="w-6" />
-          )}
+            
+            <Button
+              size="sm"
+              variant="ghost"
+              className="w-full justify-start text-red-600 hover:text-red-800"
+              onClick={() => handleDeleteNode(node)}
+            >
+              <Trash2 className="h-3 w-3 mr-2" />
+              Delete
+            </Button>
+          </div>
+        </PopoverContent>
+      </Popover>
+    );
+  };
+
+  const renderTreeNode = (node: TreeNode, level: number = 0) => {
+    const isExpanded = expandedNodes.has(node.id);
+    const isSelected = selectedNode === node.id;
+    const hasChildren = node.children.length > 0;
+    const isDragTarget = dropTarget === node.id;
+    const canExpand = hasChildren && collapsible;
+    
+    return (
+      <div key={node.id} className="select-none">
+        <div
+          className={`flex items-center py-1 px-2 rounded-md cursor-pointer transition-colors ${
+            isSelected ? 'bg-blue-100 border-blue-200' : 'hover:bg-gray-50'
+          } ${
+            isDragTarget ? 'bg-green-100 border-green-200 border-2 border-dashed' : ''
+          }`}
+          style={{ paddingLeft: `${level * 20 + 8}px` }}
+          onClick={() => selectNode(node)}
+          draggable={node.type === 'location' || node.type === 'area'}
+          onDragStart={(e) => handleDragStart(e, node)}
+          onDragOver={(e) => handleDragOver(e, node.id)}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, node.id)}
+        >
+          {/* Expand/Collapse Button */}
+          <div className="w-5 flex justify-center">
+            {canExpand ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-4 w-4 p-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleNode(node.id);
+                }}
+              >
+                {isExpanded ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+              </Button>
+            ) : (
+              <div className="h-4 w-4" />
+            )}
+          </div>
           
           {/* Node Icon */}
-          {getNodeIcon(node)}
+          <div className="mr-2">
+            {getNodeIcon(node)}
+          </div>
           
-          {/* Node Info */}
+          {/* Node Name and Description */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center space-x-2">
               <span className="font-medium text-sm truncate">{node.name}</span>
-              {getStatusBadge(node)}
               
-              {node.type === 'location' && (
+              {showStatus && getStatusIcon(node.status)}
+              
+              {showCounts && node.device_count !== undefined && (
                 <Badge variant="secondary" className="text-xs">
-                  {node.metadata?.device_count || 0} devices
+                  🔧 {node.active_device_count || 0}/{node.device_count}
                 </Badge>
               )}
               
-              {node.type === 'area' && (
-                <Badge variant="secondary" className="text-xs">
-                  {node.children.length} devices
+              {node.alert_count !== undefined && node.alert_count > 0 && (
+                <Badge variant="destructive" className="text-xs">
+                  🚨 {node.alert_count}
                 </Badge>
               )}
               
-              {node.type === 'device' && node.protocol_type && (
-                <Badge variant="outline" className="text-xs">
-                  {node.protocol_type}
-                </Badge>
-              )}
-              
-              {node.type === 'data_point' && node.current_value !== undefined && (
+              {node.type === 'data_point' && node.metadata?.value !== undefined && (
                 <Badge variant="outline" className="text-xs font-mono">
-                  {node.current_value} {node.unit}
+                  {node.metadata.value} {node.metadata.unit}
                 </Badge>
               )}
             </div>
             
-            {/* Additional info */}
-            {node.type === 'device' && node.metadata && (
-              <div className="text-xs text-gray-500 mt-1">
-                {node.metadata.vendor && node.metadata.model && (
-                  <span>{node.metadata.vendor} {node.metadata.model}</span>
-                )}
-                {node.metadata.address && (
-                  <span className="ml-2">• {node.metadata.address}</span>
-                )}
-                {node.metadata.reliability && (
-                  <span className="ml-2">• {node.metadata.reliability}% reliable</span>
-                )}
-              </div>
-            )}
-            
-            {node.type === 'data_point' && node.last_read && (
-              <div className="text-xs text-gray-500 mt-1">
-                Last read: {new Date(node.last_read).toLocaleTimeString()} • {node.metadata?.address}
+            {node.description && (
+              <div className="text-xs text-gray-500 truncate mt-0.5">
+                {node.description}
               </div>
             )}
           </div>
           
-          {/* Action Buttons */}
-          {allowEdit && (
-            <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              {showAddButtons && node.type !== 'data_point' && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 w-6 p-0"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // Add child node
-                  }}
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
-              )}
-              
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-6 w-6 p-0"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onNodeEdit?.(node);
-                }}
-              >
-                <Edit className="h-3 w-3" />
-              </Button>
-              
-              {node.type !== 'location' && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 w-6 p-0 text-red-600 hover:text-red-800"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNodeDelete?.(node);
-                  }}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              )}
+          {/* Actions Menu */}
+          {(node.type === 'location' || node.type === 'area') && (
+            <div onClick={(e) => e.stopPropagation()}>
+              {renderNodeActions(node)}
             </div>
           )}
         </div>
         
-        {/* Render Children */}
+        {/* Children */}
         {hasChildren && isExpanded && (
-          <div className="ml-2">
-            {filteredChildren.map(child => renderNode(child, level + 1))}
+          <div>
+            {node.children.map(child => renderTreeNode(child, level + 1))}
           </div>
         )}
       </div>
     );
   };
 
-  const filteredTree = treeData.filter(node => {
-    if (!searchTerm) return true;
-    
-    const matchesNode = node.name.toLowerCase().includes(searchTerm.toLowerCase());
-    const hasMatchingChild = node.children.some(child => 
-      child.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      child.children.some(grandChild => 
-        grandChild.name.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-    );
-    
-    return matchesNode || hasMatchingChild;
-  });
+  const filteredTree = filterTree(treeData, searchTerm);
 
   return (
-    <Card className="h-full">
-      <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span>Device Hierarchy</span>
-          <div className="flex items-center space-x-2">
-            {allowDragDrop && (
-              <Badge variant="secondary" className="text-xs">
-                <Move className="h-3 w-3 mr-1" />
-                Drag & Drop
-              </Badge>
-            )}
-            <Button size="sm" variant="outline" onClick={loadTreeData}>
-              <RefreshCw className="h-4 w-4" />
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="p-3 border-b space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-sm">System Hierarchy</h3>
+          <div className="flex items-center space-x-1">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setAddDialogConfig({ nodeType: 'location' });
+                setShowAddDialog(true);
+              }}
+              className="h-6 px-2 text-xs"
+            >
+              <Plus className="h-3 w-3 mr-1" />
+              Location
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={loadTreeData}
+              className="h-6 w-6 p-0"
+            >
+              <RefreshCw className="h-3 w-3" />
             </Button>
           </div>
-        </CardTitle>
-      </CardHeader>
-      
-      <CardContent className="space-y-4">
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
-          <Input
-            placeholder="Search devices and data points..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-8"
-          />
         </div>
         
-        {/* Tree */}
-        <div className="space-y-1 max-h-96 overflow-y-auto">
-          {loading ? (
-            <div className="flex justify-center items-center py-8">
-              <div className="text-gray-600">Loading hierarchy...</div>
-            </div>
-          ) : filteredTree.length === 0 ? (
-            <div className="text-center py-8">
-              <Building className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">
-                {searchTerm ? 'No matching devices found' : 'No devices configured'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-1 group">
-              {filteredTree.map(node => renderNode(node))}
-            </div>
-          )}
-        </div>
-        
-        {/* Drag Instructions */}
-        {allowDragDrop && filteredTree.length > 0 && (
-          <div className="text-xs text-gray-500 p-2 bg-gray-50 rounded">
-            📝 <strong>Drag & Drop:</strong> Drag devices between areas or data points between devices to reorganize your hierarchy.
+        {searchable && (
+          <div className="relative">
+            <Search className="absolute left-2 top-2 h-3 w-3 text-gray-400" />
+            <Input
+              placeholder="Search hierarchy..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-7 h-7 text-xs"
+            />
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+      
+      {/* Tree Content */}
+      <div className="flex-1 overflow-auto p-2">
+        {loading ? (
+          <div className="flex justify-center items-center py-8">
+            <div className="text-gray-500 text-sm">Loading hierarchy...</div>
+          </div>
+        ) : filteredTree.length === 0 ? (
+          <div className="text-center py-8">
+            <MapPin className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+            <p className="text-gray-500 text-sm">
+              {searchTerm ? 'No matching results' : 'No locations configured'}
+            </p>
+            {!searchTerm && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setAddDialogConfig({ nodeType: 'location' });
+                  setShowAddDialog(true);
+                }}
+                className="mt-2"
+              >
+                <Plus className="h-3 w-3 mr-1" />
+                Add Location
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {filteredTree.map(node => renderTreeNode(node))}
+          </div>
+        )}
+      </div>
+      
+      {/* Add Node Dialog */}
+      <AddNodeDialog
+        open={showAddDialog}
+        onClose={() => setShowAddDialog(false)}
+        parentId={addDialogConfig.parentId}
+        nodeType={addDialogConfig.nodeType}
+        onSuccess={loadTreeData}
+      />
+    </div>
   );
-}
+};
