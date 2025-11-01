@@ -2,8 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Bell,
   Settings,
@@ -16,63 +25,70 @@ import {
   CheckCircle,
   Search,
   Menu,
-  Home
+  Home,
+  Shield
 } from 'lucide-react';
 import { api } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface HeaderProps {
   className?: string;
+  onToggleSidebar?: () => void;
 }
 
 interface SystemStatus {
   status: string;
   active_protocols: number;
   websocket_connections: number;
-  alert_count: number;
+  registered_users: number;
 }
 
-interface Notification {
+interface Alert {
   id: string;
   title: string;
-  description: string;
-  severity: 'info' | 'warning' | 'error';
+  message: string;
+  severity: 'info' | 'warning' | 'error' | 'critical';
   timestamp: string;
-  read: boolean;
+  acknowledged: boolean;
+  source: string;
 }
 
-export const Header: React.FC<HeaderProps> = ({ className }) => {
+export const Header: React.FC<HeaderProps> = ({ className, onToggleSidebar }) => {
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user, logout, isAdmin, hasPermission, isAuthenticated } = useAuth();
   
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'error'>('disconnected');
   
   useEffect(() => {
-    loadSystemStatus();
-    loadNotifications();
-    
-    // Refresh status every 30 seconds
-    const interval = setInterval(() => {
+    if (isAuthenticated) {
       loadSystemStatus();
-      loadNotifications();
-    }, 30000);
-    
-    return () => clearInterval(interval);
-  }, []);
+      loadAlerts();
+      
+      // Refresh status every 30 seconds
+      const interval = setInterval(() => {
+        loadSystemStatus();
+        loadAlerts();
+      }, 30000);
+      
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated]);
   
   const loadSystemStatus = async () => {
     try {
-      const response = await api.get('/api/status');
+      const response = await api.get('/health');
       const data = response.data;
       
       setSystemStatus({
         status: data.status || 'unknown',
-        active_protocols: data.protocol_manager?.running_protocols || 0,
+        active_protocols: data.statistics?.active_protocols || 0,
         websocket_connections: data.statistics?.websocket_connections || 0,
-        alert_count: 0 // Will be populated by alerts API
+        registered_users: data.statistics?.registered_users || 0
       });
       
       setConnectionStatus('connected');
@@ -83,22 +99,13 @@ export const Header: React.FC<HeaderProps> = ({ className }) => {
     }
   };
   
-  const loadNotifications = async () => {
+  const loadAlerts = async () => {
     try {
-      // This would load actual notifications/alerts
-      // For now, showing sample notifications
-      setNotifications([
-        {
-          id: '1',
-          title: 'Protocol Connected',
-          description: 'Modbus TCP protocol successfully connected',
-          severity: 'info',
-          timestamp: new Date().toISOString(),
-          read: false
-        }
-      ]);
+      const response = await api.get('/api/alerts?limit=10&acknowledged=false');
+      setAlerts(response.data || []);
     } catch (error) {
-      console.error('[Header] Failed to load notifications:', error);
+      console.error('[Header] Failed to load alerts:', error);
+      setAlerts([]);
     }
   };
   
@@ -107,19 +114,21 @@ export const Header: React.FC<HeaderProps> = ({ className }) => {
     switch (path) {
       case '/':
       case '/dashboard':
-        return 'System Overview';
+        return 'Przegląd systemu';
       case '/protocols':
-        return 'Protocol Management';
+        return 'Zarządzanie protokołami';
       case '/devices':
-        return 'Device Management';
+        return 'Zarządzanie urządzeniami';
       case '/monitoring':
-        return 'Real-time Monitoring';
+        return 'Monitoring czasu rzeczywistego';
       case '/historical':
-        return 'Historical Data';
+        return 'Dane historyczne';
       case '/alerts':
-        return 'Alert Management';
+        return 'Zarządzanie alertami';
+      case '/locations':
+        return 'Zarządzanie lokalizacjami';
       case '/settings':
-        return 'System Settings';
+        return 'Ustawienia systemu';
       default:
         return 'Industrial IoT Platform';
     }
@@ -136,13 +145,58 @@ export const Header: React.FC<HeaderProps> = ({ className }) => {
     }
   };
   
-  const unreadNotifications = notifications.filter(n => !n.read).length;
+  const getSeverityIcon = (severity: string) => {
+    switch (severity) {
+      case 'critical':
+      case 'error':
+        return <AlertTriangle className="h-4 w-4 text-red-500" />;
+      case 'warning':
+        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+      default:
+        return <CheckCircle className="h-4 w-4 text-blue-500" />;
+    }
+  };
+  
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case 'admin':
+        return 'bg-red-100 text-red-800';
+      case 'operator':
+        return 'bg-blue-100 text-blue-800';
+      case 'viewer':
+        return 'bg-green-100 text-green-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+  
+  const getUserInitials = () => {
+    if (user?.full_name) {
+      return user.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
+    }
+    return user?.username.substring(0, 2).toUpperCase() || 'U';
+  };
+  
+  const unreadAlerts = alerts.filter(alert => !alert.acknowledged).length;
   
   return (
-    <header className={`bg-white shadow-sm border-b border-gray-200 px-6 py-4 ${className || ''}`}>
+    <header className={`bg-white shadow-sm border-b border-gray-200 px-4 lg:px-6 py-3 ${className || ''}`}>
       <div className="flex justify-between items-center">
-        {/* Left Side - Title and Breadcrumbs */}
+        {/* Left Side - Navigation and Title */}
         <div className="flex items-center space-x-4">
+          {/* Sidebar Toggle (Mobile) */}
+          {onToggleSidebar && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onToggleSidebar}
+              className="lg:hidden p-2"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+          )}
+          
+          {/* Home Button */}
           <Button
             size="sm"
             variant="ghost"
@@ -154,107 +208,94 @@ export const Header: React.FC<HeaderProps> = ({ className }) => {
           
           <Separator orientation="vertical" className="h-6" />
           
+          {/* Page Title */}
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">{getPageTitle()}</h1>
-            <div className="text-sm text-gray-500 mt-0.5">
-              {location.pathname !== '/' && (
-                <span className="flex items-center space-x-1">
-                  <span>Dashboard</span>
-                  <span>›</span>
-                  <span className="font-medium">{getPageTitle()}</span>
-                </span>
-              )}
-            </div>
+            <h1 className="text-lg lg:text-xl font-semibold text-gray-900">{getPageTitle()}</h1>
+            {location.pathname !== '/' && (
+              <div className="text-xs text-gray-500 hidden sm:block">
+                Dashboard › {getPageTitle()}
+              </div>
+            )}
           </div>
         </div>
         
-        {/* Right Side - Status and Actions */}
-        <div className="flex items-center space-x-4">
-          {/* System Status */}
+        {/* Right Side - Status and User Actions */}
+        <div className="flex items-center space-x-2 lg:space-x-4">
+          {/* System Status (Desktop) */}
           {systemStatus && (
-            <div className="hidden md:flex items-center space-x-3 text-sm">
+            <div className="hidden lg:flex items-center space-x-3 text-sm">
               <div className="flex items-center space-x-1">
                 {getConnectionIcon()}
                 <span className="text-gray-600">
-                  {connectionStatus === 'connected' ? 'Connected' : 
-                   connectionStatus === 'error' ? 'Disconnected' : 'Connecting...'}
+                  {connectionStatus === 'connected' ? 'Online' : 
+                   connectionStatus === 'error' ? 'Offline' : 'Łączenie...'}
                 </span>
               </div>
               
               {connectionStatus === 'connected' && (
                 <>
                   <Separator orientation="vertical" className="h-4" />
-                  
-                  <div className="flex items-center space-x-2">
-                    <CheckCircle className="h-4 w-4 text-green-600" />
-                    <span>{systemStatus.active_protocols} protocols</span>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <Activity className="h-4 w-4 text-blue-600" />
-                    <span>{systemStatus.websocket_connections} connections</span>
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-1">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <span>{systemStatus.active_protocols}</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <Activity className="h-4 w-4 text-blue-600" />
+                      <span>{systemStatus.websocket_connections}</span>
+                    </div>
                   </div>
                 </>
               )}
             </div>
           )}
           
-          {/* Notifications */}
+          {/* Alerts Notification */}
           <Popover>
             <PopoverTrigger asChild>
               <Button size="sm" variant="ghost" className="relative p-2">
                 <Bell className="h-5 w-5" />
-                {unreadNotifications > 0 && (
-                  <Badge 
-                    className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center text-xs p-0 bg-red-500"
-                  >
-                    {unreadNotifications}
+                {unreadAlerts > 0 && (
+                  <Badge className="absolute -top-1 -right-1 h-5 w-5 flex items-center justify-center text-xs p-0 bg-red-500">
+                    {unreadAlerts > 9 ? '9+' : unreadAlerts}
                   </Badge>
                 )}
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-80 p-0">
               <div className="p-4 border-b">
-                <h3 className="font-semibold">Notifications</h3>
-                {unreadNotifications > 0 && (
-                  <p className="text-sm text-gray-600">{unreadNotifications} unread</p>
+                <h3 className="font-semibold">Alerty systemowe</h3>
+                {unreadAlerts > 0 && (
+                  <p className="text-sm text-gray-600">{unreadAlerts} nowych alertów</p>
                 )}
               </div>
               
               <div className="max-h-80 overflow-y-auto">
-                {notifications.length === 0 ? (
+                {alerts.length === 0 ? (
                   <div className="p-4 text-center text-gray-500">
-                    No notifications
+                    Brak nowych alertów
                   </div>
                 ) : (
-                  notifications.map((notification) => (
+                  alerts.slice(0, 5).map((alert) => (
                     <div
-                      key={notification.id}
-                      className={`p-4 border-b hover:bg-gray-50 ${
-                        !notification.read ? 'bg-blue-50' : ''
+                      key={alert.id}
+                      className={`p-3 border-b hover:bg-gray-50 cursor-pointer ${
+                        !alert.acknowledged ? 'bg-yellow-50' : ''
                       }`}
+                      onClick={() => navigate('/alerts')}
                     >
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <div className="font-medium text-sm">{notification.title}</div>
-                          <div className="text-sm text-gray-600 mt-1">
-                            {notification.description}
+                      <div className="flex items-start space-x-2">
+                        {getSeverityIcon(alert.severity)}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm text-gray-900 truncate">
+                            {alert.title}
                           </div>
-                          <div className="text-xs text-gray-400 mt-2">
-                            {new Date(notification.timestamp).toLocaleTimeString()}
+                          <div className="text-sm text-gray-600 truncate">
+                            {alert.message}
                           </div>
-                        </div>
-                        
-                        <div className="ml-2">
-                          {notification.severity === 'error' && (
-                            <AlertTriangle className="h-4 w-4 text-red-500" />
-                          )}
-                          {notification.severity === 'warning' && (
-                            <AlertTriangle className="h-4 w-4 text-yellow-500" />
-                          )}
-                          {notification.severity === 'info' && (
-                            <CheckCircle className="h-4 w-4 text-blue-500" />
-                          )}
+                          <div className="text-xs text-gray-400 mt-1">
+                            {alert.source} • {new Date(alert.timestamp).toLocaleTimeString('pl-PL')}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -262,87 +303,139 @@ export const Header: React.FC<HeaderProps> = ({ className }) => {
                 )}
               </div>
               
-              {notifications.length > 0 && (
-                <div className="p-4 border-t">
+              {alerts.length > 0 && (
+                <div className="p-3 border-t">
                   <Button
                     size="sm"
                     variant="outline"
                     className="w-full"
                     onClick={() => navigate('/alerts')}
                   >
-                    View All Alerts
+                    Zobacz wszystkie alerty
                   </Button>
                 </div>
               )}
             </PopoverContent>
           </Popover>
           
-          {/* User Menu */}
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button size="sm" variant="ghost" className="p-2">
-                <User className="h-5 w-5" />
+          {/* User Profile Menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" className="relative h-9 w-9 rounded-full p-0">
+                <Avatar className="h-9 w-9">
+                  <AvatarFallback className="bg-blue-100 text-blue-800 text-sm font-medium">
+                    {getUserInitials()}
+                  </AvatarFallback>
+                </Avatar>
               </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-48 p-2">
-              <div className="space-y-1">
-                <div className="px-2 py-1.5 text-sm font-medium">Admin User</div>
-                <div className="px-2 py-1 text-xs text-gray-500">admin@industrial-iot.com</div>
-                
-                <Separator className="my-2" />
-                
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="w-full justify-start"
-                  onClick={() => navigate('/settings')}
-                >
-                  <Settings className="h-4 w-4 mr-2" />
-                  Settings
-                </Button>
-                
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="w-full justify-start text-red-600 hover:text-red-800"
-                  onClick={() => {
-                    toast({
-                      title: "Logged Out",
-                      description: "You have been successfully logged out"
-                    });
-                    // In a real app, would handle logout
-                    console.log('[Header] Logout clicked');
-                  }}
-                >
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Logout
-                </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
-          
-          {/* Mobile Menu Toggle */}
-          <Button size="sm" variant="ghost" className="md:hidden p-2">
-            <Menu className="h-5 w-5" />
-          </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="w-64" align="end" forceMount>
+              <DropdownMenuLabel className="font-normal">
+                <div className="flex flex-col space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium leading-none">
+                      {user?.full_name || user?.username}
+                    </p>
+                    <Badge 
+                      variant="secondary" 
+                      className={`text-xs ${getRoleColor(user?.role || 'user')}`}
+                    >
+                      {user?.role === 'admin' ? 'Administrator' : 
+                       user?.role === 'operator' ? 'Operator' : 
+                       user?.role === 'viewer' ? 'Obserwator' : 'Użytkownik'}
+                    </Badge>
+                  </div>
+                  {user?.email && (
+                    <p className="text-xs leading-none text-muted-foreground">
+                      {user.email}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Ostatnie logowanie: {user?.last_login 
+                      ? new Date(user.last_login).toLocaleString('pl-PL') 
+                      : 'Teraz'
+                    }
+                  </p>
+                </div>
+              </DropdownMenuLabel>
+              
+              <DropdownMenuSeparator />
+              
+              {/* User Permissions Summary */}
+              {user?.permissions && (
+                <>
+                  <div className="px-2 py-2">
+                    <p className="text-xs text-muted-foreground mb-2">Uprawnienia:</p>
+                    <div className="space-y-1">
+                      {Object.entries(user.permissions).slice(0, 4).map(([permission, hasAccess]) => (
+                        <div key={permission} className="flex items-center justify-between text-xs">
+                          <span className="text-gray-600">
+                            {permission.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())}
+                          </span>
+                          <div className={`w-2 h-2 rounded-full ${
+                            hasAccess ? 'bg-green-500' : 'bg-gray-300'
+                          }`}></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              
+              <DropdownMenuItem onClick={() => navigate('/profile')}>
+                <User className="mr-2 h-4 w-4" />
+                <span>Profil użytkownika</span>
+              </DropdownMenuItem>
+              
+              {(isAdmin() || hasPermission('system_settings')) && (
+                <DropdownMenuItem onClick={() => navigate('/settings')}>
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Ustawienia systemu</span>
+                </DropdownMenuItem>
+              )}
+              
+              {isAdmin() && (
+                <DropdownMenuItem onClick={() => navigate('/admin')}>
+                  <Shield className="mr-2 h-4 w-4" />
+                  <span>Panel administratora</span>
+                </DropdownMenuItem>
+              )}
+              
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={logout} className="text-red-600">
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>Wyloguj się</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       
       {/* Mobile Status Bar */}
       {systemStatus && (
-        <div className="md:hidden mt-3 pt-3 border-t border-gray-200">
+        <div className="lg:hidden mt-3 pt-3 border-t border-gray-200">
           <div className="flex justify-between items-center text-sm">
             <div className="flex items-center space-x-2">
               {getConnectionIcon()}
               <span className="text-gray-600">
                 {connectionStatus === 'connected' ? 'Online' : 'Offline'}
               </span>
+              {isAdmin() && (
+                <Badge variant="outline" className="text-xs">
+                  <Shield className="h-3 w-3 mr-1" />
+                  Admin
+                </Badge>
+              )}
             </div>
             
             {connectionStatus === 'connected' && (
               <div className="flex items-center space-x-4 text-xs text-gray-500">
-                <span>{systemStatus.active_protocols} protocols</span>
-                <span>{systemStatus.websocket_connections} connections</span>
+                <span>{systemStatus.active_protocols} protokołów</span>
+                <span>{systemStatus.websocket_connections} połączeń</span>
+                {unreadAlerts > 0 && (
+                  <span className="text-red-600">{unreadAlerts} alertów</span>
+                )}
               </div>
             )}
           </div>
