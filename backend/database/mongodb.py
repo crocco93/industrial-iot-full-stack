@@ -16,6 +16,8 @@ from models.system_settings import SystemSettings
 from models.device import Device
 from models.data_point import DataPoint
 from models.historical_data import HistoricalData
+from models.location import Location
+from models.alert import Alert
 
 load_dotenv()
 
@@ -79,7 +81,7 @@ async def init_database():
     """Initialize database connection and Beanie ODM"""
     try:
         # Get MongoDB configuration
-        mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017/protocols_db")
+        mongo_url = os.getenv("MONGODB_URL", "mongodb://localhost:27017/industrial_iot")
         
         # Parse URL
         connection_string, database_name = parse_mongo_url(mongo_url)
@@ -122,7 +124,9 @@ async def init_database():
             SystemSettings,
             Device,
             DataPoint,
-            HistoricalData
+            HistoricalData,
+            Location,  # ✅ DODANE
+            Alert      # ✅ DODANE
         ]
         
         await init_beanie(
@@ -169,6 +173,18 @@ async def create_indexes():
         
         # Create indexes for Device
         await db.database.device.create_index([("protocol_id", 1)])
+        await db.database.device.create_index([("location_id", 1)])
+        
+        # Create indexes for Location (NEW)
+        await db.database.locations.create_index([("parent_id", 1), ("order_index", 1)])
+        await db.database.locations.create_index([("type", 1), ("status", 1)])
+        await db.database.locations.create_index([("path", 1)])
+        
+        # Create indexes for Alert (NEW)
+        await db.database.alerts.create_index([("status", 1), ("severity", 1)])
+        await db.database.alerts.create_index([("created_at", -1)])
+        await db.database.alerts.create_index([("device_id", 1)])
+        await db.database.alerts.create_index([("location_id", 1)])
         
         # Create indexes for Certificate (fingerprint should be unique)
         await db.database.certificate.create_index([("fingerprint", 1)], unique=True)
