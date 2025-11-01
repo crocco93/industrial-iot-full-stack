@@ -7,8 +7,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Save, RefreshCw, AlertTriangle, Activity, Server, Database } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';  // ✅ FIXED import
-import { api } from '@/services/api';  // ✅ FIXED import
+import { useToast } from '@/hooks/use-toast';
+import { api } from '@/services/api';
 
 interface SystemSetting {
   id: string;
@@ -90,7 +90,7 @@ export function SettingsPage() {
       setSettings(response.data || DEFAULT_SETTINGS);
     } catch (error) {
       console.error('Error loading settings:', error);
-      setSettings(DEFAULT_SETTINGS);  // Use defaults if API fails
+      setSettings(DEFAULT_SETTINGS);
       toast({
         title: "Settings Loaded",
         description: "Using default settings - API not available",
@@ -103,7 +103,6 @@ export function SettingsPage() {
 
   const loadSystemInfo = async () => {
     try {
-      // Try multiple endpoints to get system info
       const [statusResponse, healthResponse] = await Promise.all([
         api.get('/api/status').catch(err => ({ data: null })),
         api.get('/health').catch(err => ({ data: null }))
@@ -117,15 +116,15 @@ export function SettingsPage() {
           system: {
             name: 'Industrial IoT System',
             version: statusData?.api_version || '1.0.0',
-            uptime: '24h 15m',  // Mock uptime
+            uptime: '24h 15m',
             status: statusData?.status || healthData?.status || 'unknown'
           },
           statistics: {
             totalProtocols: statusData?.database_statistics?.total_protocols || 0,
             totalConnections: statusData?.database_statistics?.total_connections || 0,
             activeConnections: statusData?.protocol_manager?.running_protocols || 0,
-            monitoringDataPointsLastHour: 0,  // Would come from monitoring API
-            logEntriesLastHour: 0  // Would come from logs API
+            monitoringDataPointsLastHour: 0,
+            logEntriesLastHour: 0
           },
           timestamp: new Date().toISOString()
         };
@@ -134,7 +133,6 @@ export function SettingsPage() {
       }
     } catch (error) {
       console.error('Error loading system info:', error);
-      // Create mock system info if API fails
       setSystemInfo({
         system: {
           name: 'Industrial IoT System',
@@ -189,6 +187,7 @@ export function SettingsPage() {
     return settings.filter(s => s.category === category);
   };
 
+  // ✅ SINGLE renderSettingControl function - removed duplicate
   const renderSettingControl = (setting: SystemSetting) => {
     const handleChange = (newValue: any) => {
       handleSaveSetting(setting, newValue);
@@ -214,7 +213,7 @@ export function SettingsPage() {
             <Input
               type="number"
               value={setting.value}
-              onChange={(e) => handleChange(parseFloat(e.target.value))}
+              onChange={(e) => handleChange(parseFloat(e.target.value) || 0)}
               disabled={saving}
             />
           </div>
@@ -449,62 +448,4 @@ export function SettingsPage() {
       </Tabs>
     </div>
   );
-
-  function renderSettingControl(setting: SystemSetting) {
-    const handleChange = (newValue: any) => {
-      handleSaveSetting(setting, newValue);
-    };
-
-    switch (typeof setting.value) {
-      case 'boolean':
-        return (
-          <div className="flex items-center space-x-2">
-            <Switch
-              checked={setting.value}
-              onCheckedChange={handleChange}
-              disabled={saving}
-            />
-            <Label>{setting.description}</Label>
-          </div>
-        );
-      
-      case 'number':
-        return (
-          <div className="space-y-2">
-            <Label>{setting.description}</Label>
-            <Input
-              type="number"
-              value={setting.value}
-              onChange={(e) => handleChange(parseFloat(e.target.value) || 0)}
-              disabled={saving}
-            />
-          </div>
-        );
-      
-      default:
-        if (setting.value && setting.value.length > 50) {
-          return (
-            <div className="space-y-2">
-              <Label>{setting.description}</Label>
-              <Textarea
-                value={setting.value}
-                onChange={(e) => handleChange(e.target.value)}
-                rows={3}
-                disabled={saving}
-              />
-            </div>
-          );
-        }
-        return (
-          <div className="space-y-2">
-            <Label>{setting.description}</Label>
-            <Input
-              value={setting.value}
-              onChange={(e) => handleChange(e.target.value)}
-              disabled={saving}
-            />
-          </div>
-        );
-    }
-  }
 }
