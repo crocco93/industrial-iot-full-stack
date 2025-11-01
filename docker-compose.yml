@@ -8,41 +8,58 @@ services:
       dockerfile: Dockerfile
     container_name: industrial-iot-backend
     ports:
-      - "3001:3001"
-      - "3002:3002"
+      - "3001:3001"  # Single port for both API and WebSocket
     environment:
-      - MONGO_URL=mongodb://admin:industrial_iot_2024@mongodb:27017/industrial_iot?authSource=admin
+      - MONGODB_URL=mongodb://admin:industrial_iot_2024@mongodb:27017/industrial_iot?authSource=admin
       - REDIS_URL=redis://redis:6379
+      - PORT=3001
+      - HOST=0.0.0.0
+      - ENVIRONMENT=production
+      # CORS configuration for Docker network
+      - CORS_ORIGINS=["http://localhost:80","http://localhost:3000","http://localhost:5173","http://frontend:80"]
+      # N8N Integration
+      - N8N_URL=http://n8n:5678
+      - N8N_USERNAME=admin
+      - N8N_PASSWORD=industrial_n8n_2024
+      # Ollama Integration
+      - OLLAMA_URL=http://ollama:11434
     depends_on:
       - mongodb
       - redis
     networks:
       - industrial-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # Frontend - React + Nginx
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-      args:  # ← DODAJ ARGS SECTION!
-      - VITE_API_URL=http://localhost:3001/api
-      - VITE_WS_URL=ws://localhost:3002/ws
-      - VITE_N8N_URL=http://localhost:5678
-      - VITE_LLM_URL=http://localhost:11434
+      args:
+        # Build-time environment variables
+        - VITE_API_URL=http://localhost:3001
+        - VITE_WS_URL=ws://localhost:3001
+        - VITE_N8N_URL=http://localhost:5678
+        - VITE_OLLAMA_URL=http://localhost:11434
     container_name: industrial-iot-frontend
     ports:
       - "80:80"
-    environment:
-      - VITE_API_URL=http://localhost:3001/api     # ← ZMIEŃ!
-      - VITE_WS_URL=ws://localhost:3002/ws         # ← ZMIEŃ!
-      - VITE_N8N_URL=http://localhost:5678
-      - VITE_LLM_URL=http://localhost:11434
     depends_on:
       - backend
     networks:
       - industrial-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # Database - MongoDB
   mongodb:
@@ -56,9 +73,16 @@ services:
       - MONGO_INITDB_DATABASE=industrial_iot
     volumes:
       - mongodb_data:/data/db
+      - ./backend/scripts:/docker-entrypoint-initdb.d:ro
     networks:
       - industrial-network
     restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/industrial_iot --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # Cache - Redis
   redis:
@@ -66,11 +90,19 @@ services:
     container_name: industrial-iot-redis
     ports:
       - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=industrial_redis_2024
     volumes:
       - redis_data:/data
     networks:
       - industrial-network
     restart: unless-stopped
+    command: redis-server --requirepass industrial_redis_2024
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # N8N - Workflow Automation (FULL PROFILE)
   n8n:
@@ -82,6 +114,13 @@ services:
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=admin
       - N8N_BASIC_AUTH_PASSWORD=industrial_n8n_2024
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678
+      - GENERIC_TIMEZONE=Europe/Warsaw
+      - DB_TYPE=sqlite
+      - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
     volumes:
       - n8n_data:/home/node/.n8n
     networks:
@@ -89,13 +128,22 @@ services:
     restart: unless-stopped
     profiles:
       - full
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # Local LLM - Ollama (FULL PROFILE)
   ollama:
     image: ollama/ollama:latest
-    container_name: industrial-iot-llama
+    container_name: industrial-iot-ollama
     ports:
       - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_ORIGINS=["http://localhost:*","http://backend:*"]
     volumes:
       - ollama_data:/root/.ollama
     networks:
@@ -103,17 +151,91 @@ services:
     restart: unless-stopped
     profiles:
       - full
+    # GPU support (uncomment if NVIDIA GPU available)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Database Management UI (Development)
+  mongo-express:
+    image: mongo-express:latest
+    container_name: industrial-iot-mongo-express
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME=admin
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=industrial_iot_2024
+      - ME_CONFIG_MONGODB_URL=mongodb://admin:industrial_iot_2024@mongodb:27017/?authSource=admin
+      - ME_CONFIG_BASICAUTH_USERNAME=admin
+      - ME_CONFIG_BASICAUTH_PASSWORD=industrial_iot_2024
+    depends_on:
+      - mongodb
+    networks:
+      - industrial-network
+    restart: unless-stopped
+    profiles:
+      - dev
+      - full
 
 volumes:
   mongodb_data:
+    driver: local
   redis_data:
+    driver: local
   n8n_data:
+    driver: local
   ollama_data:
+    driver: local
 
 networks:
   industrial-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
-# Usage:
-# Core: docker compose up --build
-# Full: docker compose --profile full up --build
+# ==================================================
+# USAGE INSTRUCTIONS
+# ==================================================
+#
+# Start core services (Backend + Frontend + Database):
+#   docker compose up --build
+#
+# Start full stack with N8N and Ollama:
+#   docker compose --profile full up --build
+#
+# Start with development tools (includes Mongo Express):
+#   docker compose --profile dev up --build
+#
+# Start everything:
+#   docker compose --profile full --profile dev up --build
+#
+# Individual services:
+#   docker compose up backend mongodb redis --build
+#
+# View logs:
+#   docker compose logs -f backend
+#   docker compose logs -f frontend
+#
+# Stop and cleanup:
+#   docker compose down
+#   docker compose down -v  # Also remove data volumes
+#
+# ==================================================
+# ACCESS POINTS
+# ==================================================
+#
+# Frontend:           http://localhost:80
+# Backend API:        http://localhost:3001
+# API Documentation:  http://localhost:3001/docs
+# MongoDB:            mongodb://localhost:27017
+# Mongo Express:      http://localhost:8081 (dev profile)
+# Redis:              redis://localhost:6379
+# N8N Workflows:      http://localhost:5678 (full profile)
+# Ollama LLM:         http://localhost:11434 (full profile)
+#
+# ==================================================
