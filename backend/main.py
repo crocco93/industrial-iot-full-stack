@@ -6,7 +6,11 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 from database.mongodb import init_database, close_database
-from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards, historical, alerts, locations, device_discovery
+from api import (
+    protocols, connections, monitoring, logs, security, settings, websocket, 
+    data_points, integrations, devices, health, dashboards, historical, 
+    alerts, locations, device_discovery, auth, mqtt_export  # ✅ ADDED auth and mqtt_export
+)
 from services.protocol_manager import protocol_manager
 from services.websocket_manager import start_websocket_heartbeat
 
@@ -30,6 +34,11 @@ async def lifespan(app: FastAPI):
         # Start WebSocket heartbeat
         await start_websocket_heartbeat()
         print("✅ WebSocket manager started")
+        
+        # Initialize authentication system
+        from api.auth import create_default_admin
+        create_default_admin()
+        print("✅ Authentication system initialized")
         
         print("🌟 Industrial Protocols Management API is ready!")
     except Exception as e:
@@ -65,11 +74,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 🔥 FIXED CORS Configuration
+# 🔥 CORS Configuration
 CORS_ORIGINS = [
     "http://localhost:3000",   # React dev server
     "http://localhost:5173",   # Vite dev server
-    "http://localhost:80",     # Docker frontend ✅ DODANE
+    "http://localhost:80",     # Docker frontend
     "http://localhost",        # Docker frontend alternative
     "http://frontend:80",      # Docker internal network
     "http://127.0.0.1:3000",   # Alternative localhost
@@ -93,22 +102,24 @@ print(f"🌐 CORS origins configured: {CORS_ORIGINS}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,  # ✅ FIXED - teraz zawiera localhost:80
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],  # Allow all HTTP methods
     allow_headers=["*"],  # Allow all headers
     expose_headers=["*"], # Expose all headers to frontend
 )
 
-# Include API routers
+# ✅ Include API routers (ORDER MATTERS - auth first!)
+app.include_router(auth.router, prefix="/api", tags=["authentication"])  # ✅ ADDED
+app.include_router(alerts.router, prefix="/api", tags=["alerts"])
+app.include_router(mqtt_export.router, prefix="/api", tags=["mqtt-export"])  # ✅ ADDED
 app.include_router(protocols.router, prefix="/api", tags=["protocols"])
 app.include_router(connections.router, prefix="/api", tags=["connections"])
 app.include_router(devices.router, prefix="/api", tags=["devices"])
-app.include_router(device_discovery.router, prefix="/api", tags=["device-discovery"])  # ✅ DODANE
+app.include_router(device_discovery.router, prefix="/api", tags=["device-discovery"])
 app.include_router(locations.router, prefix="/api", tags=["locations"])
 app.include_router(dashboards.router, prefix="/api", tags=["dashboards"])
 app.include_router(historical.router, prefix="/api", tags=["historical"])
-app.include_router(alerts.router, prefix="/api", tags=["alerts"])
 app.include_router(monitoring.router, prefix="/api", tags=["monitoring"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
@@ -148,8 +159,16 @@ async def root():
             "Hierarchical Device Management",
             "WebSocket Real-time Updates",
             "Location & Area Management",
-            "Automatic Device Discovery"  # ✅ DODANE
+            "Automatic Device Discovery",
+            "User Authentication & Authorization",  # ✅ ADDED
+            "MQTT Data Export",  # ✅ ADDED
+            "JWT Token Security"  # ✅ ADDED
         ],
+        "authentication": {
+            "login_endpoint": "/api/auth/login",
+            "default_admin": "admin/admin",
+            "jwt_expiry_minutes": int(os.getenv("JWT_EXPIRE_MINUTES", "480"))
+        },
         "documentation": "/docs",
         "openapi": "/openapi.json",
         "health_check": "/health",
@@ -167,6 +186,18 @@ async def health_check():
         from services.websocket_manager import websocket_manager
         ws_stats = websocket_manager.get_connection_stats()
         
+        # Check auth system
+        from api.auth import users_storage
+        auth_users_count = len(users_storage)
+        
+        # Check MQTT exports
+        from api.mqtt_export import mqtt_exports_storage
+        mqtt_exports_count = len(mqtt_exports_storage)
+        
+        # Check alerts
+        from api.alerts import alerts_storage
+        alerts_count = len(alerts_storage)
+        
         return {
             "status": "healthy",
             "message": "Industrial Protocols Management API is running",
@@ -177,12 +208,22 @@ async def health_check():
                 "websocket_manager": "running",
                 "alert_system": "running",
                 "location_management": "running",
-                "device_discovery": "available"  # ✅ DODANE
+                "device_discovery": "available",
+                "authentication": "active",  # ✅ ADDED
+                "mqtt_export": "available"  # ✅ ADDED
             },
             "statistics": {
                 "active_protocols": len(protocol_status),
                 "websocket_connections": ws_stats["total_connections"],
-                "websocket_channels": ws_stats["channels"]
+                "websocket_channels": ws_stats["channels"],
+                "registered_users": auth_users_count,  # ✅ ADDED
+                "mqtt_export_configs": mqtt_exports_count,  # ✅ ADDED
+                "active_alerts": alerts_count  # ✅ ADDED
+            },
+            "environment": {
+                "admin_password_set": os.getenv("ADMIN_PASSWORD", "admin") != "admin",
+                "jwt_secret_set": bool(os.getenv("JWT_SECRET_KEY")),
+                "cors_origins_count": len(CORS_ORIGINS)
             }
         }
     except Exception as e:
@@ -210,34 +251,8 @@ async def api_status():
             from services.protocol_services import get_available_protocols
             available_protocols = get_available_protocols()
         except Exception as e:
-            available_protocols = ["modbus-tcp", "opc-ua", "mqtt"]  # Default list
+            available_protocols = ["modbus-tcp", "opc-ua", "mqtt", "opc-ua", "profinet", "ethernet-ip", "canopen", "bacnet"]
             print(f"Protocol services check failed: {e}")
-        
-        # Get database statistics
-        try:
-            from models.protocol import Protocol
-            from models.connection import Connection
-            from models.device import Device
-            
-            total_protocols = await Protocol.count()
-            total_connections = await Connection.count()
-            total_devices = await Device.count()
-            
-            db_stats = {
-                "total_protocols": total_protocols,
-                "total_connections": total_connections,
-                "total_devices": total_devices,
-                "status": "connected"
-            }
-        except Exception as e:
-            # If database is not available, provide mock stats
-            db_stats = {
-                "total_protocols": 0,
-                "total_connections": 0,
-                "total_devices": 0,
-                "status": "disconnected",
-                "error": str(e)
-            }
         
         return {
             "api_version": "1.0.0",
@@ -248,12 +263,19 @@ async def api_status():
                 "protocol_details": protocol_status
             },
             "available_protocols": available_protocols,
-            "database_statistics": db_stats,
             "features": {
                 "device_discovery": True,
                 "location_management": True,
                 "real_time_monitoring": True,
-                "alert_system": True
+                "alert_system": True,
+                "user_authentication": True,  # ✅ ADDED
+                "mqtt_data_export": True,  # ✅ ADDED
+                "jwt_security": True  # ✅ ADDED
+            },
+            "security": {
+                "authentication_required": True,
+                "jwt_enabled": True,
+                "admin_account_exists": True
             }
         }
     except Exception as e:
@@ -272,6 +294,7 @@ if __name__ == "__main__":
     print(f"🔧 Starting server on {host}:{port} in {environment} mode")
     print(f"📡 Supported protocols: Modbus TCP, OPC-UA, Profinet, EtherNet/IP, MQTT, CANopen, BACnet")
     print(f"🔗 Integrations: N8N Workflows, Ollama LLM")
+    print(f"🔐 Authentication: admin/admin (change ADMIN_PASSWORD in .env)")
     print(f"🌐 API Documentation: http://{host}:{port}/docs")
     print(f"🏥 Health Check: http://{host}:{port}/health")
     print(f"🔧 CORS enabled for: {CORS_ORIGINS}")
