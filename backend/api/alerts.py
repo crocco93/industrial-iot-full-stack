@@ -1,20 +1,18 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from enum import Enum
-from models.monitoring import MonitoringData
-from models.device import Device
-from models.data_point import DataPoint
-from database.mongodb import get_database
+import logging
+import asyncio
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 class AlertSeverity(str, Enum):
     CRITICAL = "critical"
-    HIGH = "high" 
-    MEDIUM = "medium"
-    LOW = "low"
+    ERROR = "error"
+    WARNING = "warning" 
     INFO = "info"
 
 class AlertStatus(str, Enum):
@@ -23,511 +21,518 @@ class AlertStatus(str, Enum):
     RESOLVED = "resolved"
     MUTED = "muted"
 
-class AlertModel(BaseModel):
+class SystemAlert(BaseModel):
     id: Optional[str] = None
-    title: str
-    description: str
-    severity: AlertSeverity
-    status: AlertStatus = AlertStatus.ACTIVE
-    source: str  # device_id, protocol_id, system
-    source_type: str  # device, protocol, system, data_point
-    source_name: str
-    category: str  # connection, threshold, system, security
-    data_point_id: Optional[str] = None
-    device_id: Optional[str] = None
-    protocol_id: Optional[str] = None
-    threshold_value: Optional[float] = None
-    current_value: Optional[float] = None
-    metadata: Dict[str, Any] = {}
-    created_at: datetime
-    updated_at: datetime
+    type: str = Field(description="Alert type")
+    title: str = Field(description="Alert title")
+    message: str = Field(description="Alert message")
+    severity: AlertSeverity = Field(default=AlertSeverity.INFO)
+    status: AlertStatus = Field(default=AlertStatus.ACTIVE)
+    source: str = Field(default="system", description="Alert source")
+    source_type: str = Field(default="system", description="Source type: device, protocol, system")
+    source_name: str = Field(default="System", description="Human readable source name")
+    category: str = Field(default="general", description="Alert category")
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    acknowledged: bool = Field(default=False, description="Whether alert is acknowledged")
     acknowledged_at: Optional[datetime] = None
     acknowledged_by: Optional[str] = None
+    resolved: bool = Field(default=False, description="Whether alert is resolved")
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[str] = None
     muted_until: Optional[datetime] = None
-    notification_sent: bool = False
-
+    metadata: Dict[str, Any] = Field(default={}, description="Additional alert data")
+    actions_taken: List[str] = Field(default=[], description="Actions that were executed")
+    
 class AlertCreateRequest(BaseModel):
+    type: str
     title: str
-    description: str
-    severity: AlertSeverity
-    source: str
-    source_type: str
-    source_name: str
-    category: str
-    data_point_id: Optional[str] = None
-    device_id: Optional[str] = None
-    protocol_id: Optional[str] = None
-    threshold_value: Optional[float] = None
-    current_value: Optional[float] = None
+    message: str
+    severity: AlertSeverity = AlertSeverity.INFO
+    source: str = "manual"
+    source_type: str = "system"
+    source_name: str = "System"
+    category: str = "general"
     metadata: Dict[str, Any] = {}
 
-class AlertUpdateRequest(BaseModel):
-    status: Optional[AlertStatus] = None
-    acknowledged_by: Optional[str] = None
-    resolved_by: Optional[str] = None
-    mute_duration_hours: Optional[int] = None
+class AlertAcknowledgeRequest(BaseModel):
+    acknowledged_by: str = "user"
+    notes: Optional[str] = None
 
-# In-memory storage for alerts (in production, this would be MongoDB)
-alerts_storage: Dict[str, AlertModel] = {}
+class AlertResolveRequest(BaseModel):
+    resolved_by: str = "user"
+    resolution_notes: Optional[str] = None
 
-@router.get("/alerts", response_model=List[AlertModel])
-async def get_alerts(
-    severity: Optional[AlertSeverity] = None,
-    status: Optional[AlertStatus] = None,
-    category: Optional[str] = None,
-    source_type: Optional[str] = None,
-    limit: int = Query(100, ge=1, le=1000),
-    include_resolved: bool = Query(False),
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None
-):
-    """Get alerts with filtering options"""
-    try:
-        # Try to load from database first
-        db = get_database()
-        alerts_collection = db.alerts
-        
-        # Build query
-        query = {}
-        
-        if severity:
-            query["severity"] = severity
-        if status:
-            query["status"] = status
-        if category:
-            query["category"] = category
-        if source_type:
-            query["source_type"] = source_type
-        
-        if not include_resolved:
-            query["status"] = {"$ne": "resolved"}
-        
-        if start_date or end_date:
-            date_query = {}
-            if start_date:
-                date_query["$gte"] = start_date
-            if end_date:
-                date_query["$lte"] = end_date
-            query["created_at"] = date_query
-        
-        alerts_cursor = alerts_collection.find(query).sort("created_at", -1).limit(limit)
-        alerts = await alerts_cursor.to_list(length=limit)
-        
-        # Convert MongoDB documents to response format
-        result = []
-        for alert in alerts:
-            alert["id"] = alert.get("_id", alert.get("id"))
-            if "_id" in alert:
-                del alert["_id"]
-            result.append(alert)
-        
-        # If no alerts in DB, create some sample alerts for development
-        if not result:
-            sample_alerts = await create_sample_alerts()
-            result = sample_alerts
-        
-        return result
-        
-    except Exception as e:
-        # Fallback to in-memory storage
-        print(f"Database query failed, using in-memory: {e}")
-        
-        if not alerts_storage:
-            sample_alerts = await create_sample_alerts()
-            for alert in sample_alerts:
-                alerts_storage[alert.id] = alert
-        
-        # Apply filters
-        filtered_alerts = list(alerts_storage.values())
-        
-        if severity:
-            filtered_alerts = [a for a in filtered_alerts if a.severity == severity]
-        if status:
-            filtered_alerts = [a for a in filtered_alerts if a.status == status]
-        if category:
-            filtered_alerts = [a for a in filtered_alerts if a.category == category]
-        if source_type:
-            filtered_alerts = [a for a in filtered_alerts if a.source_type == source_type]
-        if not include_resolved:
-            filtered_alerts = [a for a in filtered_alerts if a.status != AlertStatus.RESOLVED]
-        
-        # Sort by creation date (newest first)
-        filtered_alerts.sort(key=lambda x: x.created_at, reverse=True)
-        
-        return filtered_alerts[:limit]
+# In-memory storage for development
+alerts_storage: Dict[str, SystemAlert] = {}
 
-async def create_sample_alerts() -> List[AlertModel]:
-    """Create sample alerts for development purposes"""
+def create_sample_alerts() -> List[SystemAlert]:
+    """Create sample alerts for development"""
     now = datetime.utcnow()
     
-    return [
-        AlertModel(
+    sample_alerts = [
+        SystemAlert(
             id="alert_001",
-            title="High Temperature Warning",
-            description="Temperature sensor reading above threshold (28°C > 25°C)",
-            severity=AlertSeverity.HIGH,
+            type="connection_timeout",
+            title="Połączenie przeterminowane",
+            message="Połączenie Modbus TCP do PLC-001 (192.168.1.100) przeterminowało się po 5 sekundach",
+            severity=AlertSeverity.ERROR,
             status=AlertStatus.ACTIVE,
-            source="device_001",
-            source_type="device",
-            source_name="Temperature Sensor #1",
-            category="threshold",
-            device_id="device_001",
-            data_point_id="dp_temp_001",
-            threshold_value=25.0,
-            current_value=28.2,
-            created_at=now - timedelta(minutes=5),
-            updated_at=now - timedelta(minutes=5),
-            metadata={"location": "Production Floor A"}
-        ),
-        AlertModel(
-            id="alert_002",
-            title="Connection Lost",
-            description="Modbus TCP connection to PLC lost",
-            severity=AlertSeverity.CRITICAL,
-            status=AlertStatus.ACTIVE,
-            source="protocol_modbus_001",
+            source="modbus_service",
             source_type="protocol",
-            source_name="Modbus TCP #1",
+            source_name="Modbus TCP PLC-001",
             category="connection",
-            protocol_id="protocol_modbus_001",
-            created_at=now - timedelta(minutes=15),
-            updated_at=now - timedelta(minutes=15),
-            metadata={"last_seen": (now - timedelta(minutes=15)).isoformat()}
+            timestamp=now - timedelta(minutes=5),
+            metadata={
+                "device_id": "PLC-001",
+                "protocol": "modbus-tcp",
+                "address": "192.168.1.100:502",
+                "timeout_duration": 5000
+            }
         ),
-        AlertModel(
+        SystemAlert(
+            id="alert_002",
+            type="data_quality",
+            title="Wysoka temperatura",
+            message="Czujnik temperatury wskazuje 85.2°C - przekroczono próg 80°C",
+            severity=AlertSeverity.WARNING,
+            status=AlertStatus.ACTIVE,
+            source="monitoring_system",
+            source_type="device",
+            source_name="Czujnik TEMP_001",
+            category="threshold",
+            timestamp=now - timedelta(minutes=2),
+            metadata={
+                "sensor_id": "TEMP_001",
+                "location": "area_production_001",
+                "current_value": 85.2,
+                "threshold_value": 80.0,
+                "unit": "celsius"
+            }
+        ),
+        SystemAlert(
             id="alert_003",
-            title="High CPU Usage",
-            description="System CPU usage above 85%",
-            severity=AlertSeverity.MEDIUM,
+            type="system_startup",
+            title="System uruchomiony",
+            message="System Industrial IoT uruchomiony pomyślnie z 6 skonfigurowanymi protokołami",
+            severity=AlertSeverity.INFO,
             status=AlertStatus.ACKNOWLEDGED,
             source="system",
             source_type="system",
             source_name="Industrial IoT System",
             category="system",
-            current_value=87.5,
-            threshold_value=85.0,
-            created_at=now - timedelta(hours=1),
-            updated_at=now - timedelta(minutes=30),
-            acknowledged_at=now - timedelta(minutes=30),
+            timestamp=now - timedelta(hours=1),
+            acknowledged=True,
+            acknowledged_at=now - timedelta(minutes=58),
             acknowledged_by="admin",
-            metadata={"component": "backend_api"}
+            metadata={
+                "protocols_count": 6,
+                "startup_time_ms": 12500,
+                "version": "1.0.0"
+            }
+        ),
+        SystemAlert(
+            id="alert_004",
+            type="device_offline",
+            title="Urządzenie offline",
+            message="Serwer OPC-UA (OPCUA_SERVER_001) nie odpowiada od 30 minut",
+            severity=AlertSeverity.CRITICAL,
+            status=AlertStatus.ACTIVE,
+            source="opcua_service",
+            source_type="protocol",
+            source_name="OPC-UA Server 001",
+            category="connection",
+            timestamp=now - timedelta(minutes=30),
+            metadata={
+                "device_id": "OPCUA_SERVER_001",
+                "protocol": "opc-ua",
+                "endpoint": "opc.tcp://192.168.1.101:4840",
+                "last_seen": (now - timedelta(minutes=35)).isoformat(),
+                "downtime_minutes": 30
+            }
+        ),
+        SystemAlert(
+            id="alert_005",
+            type="performance_warning",
+            title="Wysokie zużycie zasobów",
+            message="Zużycie pamięci RAM przekroczyło 80% - obecnie 87.3% (14.2GB/16GB)",
+            severity=AlertSeverity.WARNING,
+            status=AlertStatus.ACTIVE,
+            source="system_monitor",
+            source_type="system",
+            source_name="System Monitor",
+            category="performance",
+            timestamp=now - timedelta(minutes=8),
+            metadata={
+                "memory_usage_percent": 87.3,
+                "memory_used_gb": 14.2,
+                "memory_total_gb": 16.0,
+                "threshold_percent": 80.0,
+                "cpu_usage_percent": 45.2
+            }
+        ),
+        SystemAlert(
+            id="alert_006",
+            type="security_warning",
+            title="Podejrzane połączenie",
+            message="Wykryto próbę nieautoryzowanego połączenia z adresu IP 10.0.0.250",
+            severity=AlertSeverity.ERROR,
+            status=AlertStatus.ACTIVE,
+            source="security_monitor",
+            source_type="system",
+            source_name="Security Monitor",
+            category="security",
+            timestamp=now - timedelta(minutes=1),
+            metadata={
+                "source_ip": "10.0.0.250",
+                "attempted_protocol": "modbus-tcp",
+                "blocked": True,
+                "attempt_count": 3
+            }
         )
     ]
+    
+    return sample_alerts
 
-@router.get("/alerts/{alert_id}", response_model=AlertModel)
+@router.get("/alerts", response_model=List[SystemAlert])
+async def get_alerts(
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    source: Optional[str] = None,
+    category: Optional[str] = None,
+    acknowledged: Optional[bool] = None,
+    resolved: Optional[bool] = None,
+    limit: int = Query(50, description="Max alerts to return"),
+    offset: int = Query(0, description="Offset for pagination")
+):
+    """Get system alerts with filtering"""
+    try:
+        # Initialize sample data if empty
+        if not alerts_storage:
+            sample_alerts = create_sample_alerts()
+            for alert in sample_alerts:
+                alerts_storage[alert.id] = alert
+            logger.info(f"Initialized {len(sample_alerts)} sample alerts")
+        
+        # Filter alerts
+        filtered_alerts = list(alerts_storage.values())
+        
+        if severity:
+            filtered_alerts = [a for a in filtered_alerts if a.severity.value == severity]
+        if status:
+            filtered_alerts = [a for a in filtered_alerts if a.status.value == status]
+        if source:
+            filtered_alerts = [a for a in filtered_alerts if a.source == source]
+        if category:
+            filtered_alerts = [a for a in filtered_alerts if a.category == category]
+        if acknowledged is not None:
+            filtered_alerts = [a for a in filtered_alerts if a.acknowledged == acknowledged]
+        if resolved is not None:
+            filtered_alerts = [a for a in filtered_alerts if a.resolved == resolved]
+        
+        # Sort by timestamp desc and apply pagination
+        filtered_alerts.sort(key=lambda x: x.timestamp, reverse=True)
+        return filtered_alerts[offset:offset + limit]
+        
+    except Exception as e:
+        logger.error(f"Failed to get alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/alerts/{alert_id}", response_model=SystemAlert)
 async def get_alert(alert_id: str):
     """Get specific alert by ID"""
     try:
-        db = get_database()
-        alert = await db.alerts.find_one({"_id": alert_id})
+        if alert_id in alerts_storage:
+            return alerts_storage[alert_id]
         
-        if not alert:
-            if alert_id in alerts_storage:
-                return alerts_storage[alert_id]
-            raise HTTPException(status_code=404, detail="Alert not found")
-        
-        alert["id"] = alert["_id"]
-        del alert["_id"]
-        return alert
+        raise HTTPException(status_code=404, detail="Alert not found")
         
     except HTTPException:
         raise
     except Exception as e:
-        if alert_id in alerts_storage:
-            return alerts_storage[alert_id]
+        logger.error(f"Error getting alert {alert_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/alerts", response_model=AlertModel)
+@router.post("/alerts", response_model=SystemAlert)
 async def create_alert(alert_data: AlertCreateRequest):
-    """Create new alert"""
+    """Create new system alert"""
     try:
-        alert = AlertModel(
-            id=f"alert_{int(datetime.utcnow().timestamp())}",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+        alert = SystemAlert(
+            id=f"alert_{int(datetime.utcnow().timestamp())}_{abs(hash(alert_data.title)) % 1000}",
+            timestamp=datetime.utcnow(),
             **alert_data.dict()
         )
         
-        # Try to save to database
+        alerts_storage[alert.id] = alert
+        logger.info(f"Created alert: {alert.title}")
+        
+        # Broadcast alert via WebSocket if available
         try:
-            db = get_database()
-            alert_dict = alert.dict()
-            alert_dict["_id"] = alert_dict["id"]
-            await db.alerts.insert_one(alert_dict)
+            await broadcast_new_alert(alert)
         except Exception as e:
-            print(f"Database save failed, using in-memory: {e}")
-            alerts_storage[alert.id] = alert
+            logger.warning(f"Could not broadcast alert: {e}")
         
         return alert
         
     except Exception as e:
+        logger.error(f"Failed to create alert: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/alerts/{alert_id}/acknowledge")
-async def acknowledge_alert(alert_id: str, acknowledged_by: str):
+async def acknowledge_alert(alert_id: str, ack_data: AlertAcknowledgeRequest):
     """Acknowledge an alert"""
     try:
-        # Try database first
-        db = get_database()
-        
-        update_data = {
-            "status": AlertStatus.ACKNOWLEDGED,
-            "acknowledged_at": datetime.utcnow(),
-            "acknowledged_by": acknowledged_by,
-            "updated_at": datetime.utcnow()
-        }
-        
-        result = await db.alerts.update_one(
-            {"_id": alert_id},
-            {"$set": update_data}
-        )
-        
-        if result.modified_count == 0:
-            # Check in-memory storage
-            if alert_id in alerts_storage:
-                alert = alerts_storage[alert_id]
-                alert.status = AlertStatus.ACKNOWLEDGED
-                alert.acknowledged_at = datetime.utcnow()
-                alert.acknowledged_by = acknowledged_by
-                alert.updated_at = datetime.utcnow()
-                return {"success": True, "message": "Alert acknowledged"}
+        if alert_id not in alerts_storage:
             raise HTTPException(status_code=404, detail="Alert not found")
         
-        return {"success": True, "message": "Alert acknowledged"}
+        alert = alerts_storage[alert_id]
+        alert.acknowledged = True
+        alert.acknowledged_at = datetime.utcnow()
+        alert.acknowledged_by = ack_data.acknowledged_by
+        alert.status = AlertStatus.ACKNOWLEDGED
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/alerts/{alert_id}/resolve")
-async def resolve_alert(alert_id: str, resolved_by: str):
-    """Resolve an alert"""
-    try:
-        db = get_database()
+        if ack_data.notes:
+            alert.metadata["acknowledgment_notes"] = ack_data.notes
         
-        update_data = {
-            "status": AlertStatus.RESOLVED,
-            "resolved_at": datetime.utcnow(),
-            "resolved_by": resolved_by,
-            "updated_at": datetime.utcnow()
-        }
-        
-        result = await db.alerts.update_one(
-            {"_id": alert_id},
-            {"$set": update_data}
-        )
-        
-        if result.modified_count == 0:
-            if alert_id in alerts_storage:
-                alert = alerts_storage[alert_id]
-                alert.status = AlertStatus.RESOLVED
-                alert.resolved_at = datetime.utcnow()
-                alert.resolved_by = resolved_by
-                alert.updated_at = datetime.utcnow()
-                return {"success": True, "message": "Alert resolved"}
-            raise HTTPException(status_code=404, detail="Alert not found")
-        
-        return {"success": True, "message": "Alert resolved"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/alerts/{alert_id}/mute")
-async def mute_alert(alert_id: str, duration_hours: int = 24):
-    """Mute an alert for specified duration"""
-    try:
-        mute_until = datetime.utcnow() + timedelta(hours=duration_hours)
-        
-        db = get_database()
-        
-        update_data = {
-            "status": AlertStatus.MUTED,
-            "muted_until": mute_until,
-            "updated_at": datetime.utcnow()
-        }
-        
-        result = await db.alerts.update_one(
-            {"_id": alert_id},
-            {"$set": update_data}
-        )
-        
-        if result.modified_count == 0:
-            if alert_id in alerts_storage:
-                alert = alerts_storage[alert_id]
-                alert.status = AlertStatus.MUTED
-                alert.muted_until = mute_until
-                alert.updated_at = datetime.utcnow()
-                return {"success": True, "message": f"Alert muted for {duration_hours} hours"}
-            raise HTTPException(status_code=404, detail="Alert not found")
-        
-        return {"success": True, "message": f"Alert muted for {duration_hours} hours"}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/alerts/stats")
-async def get_alert_stats():
-    """Get alert statistics"""
-    try:
-        db = get_database()
-        
-        # Aggregate statistics
-        pipeline = [
-            {
-                "$group": {
-                    "_id": {
-                        "status": "$status",
-                        "severity": "$severity"
-                    },
-                    "count": {"$sum": 1}
-                }
-            }
-        ]
-        
-        stats_cursor = db.alerts.aggregate(pipeline)
-        stats_data = await stats_cursor.to_list(length=100)
-        
-        # Process statistics
-        stats = {
-            "total": 0,
-            "active": 0,
-            "acknowledged": 0,
-            "resolved": 0,
-            "muted": 0,
-            "by_severity": {
-                "critical": 0,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "info": 0
-            }
-        }
-        
-        for stat in stats_data:
-            status = stat["_id"]["status"]
-            severity = stat["_id"]["severity"]
-            count = stat["count"]
-            
-            stats["total"] += count
-            
-            if status in stats:
-                stats[status] += count
-            
-            if severity in stats["by_severity"]:
-                stats["by_severity"][severity] += count
-        
-        # If no data, use in-memory stats
-        if stats["total"] == 0 and alerts_storage:
-            for alert in alerts_storage.values():
-                stats["total"] += 1
-                stats[alert.status.value] += 1
-                stats["by_severity"][alert.severity.value] += 1
-        
-        return stats
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/alerts/bulk-acknowledge")
-async def bulk_acknowledge_alerts(
-    alert_ids: List[str],
-    acknowledged_by: str
-):
-    """Acknowledge multiple alerts at once"""
-    try:
-        db = get_database()
-        
-        update_data = {
-            "status": AlertStatus.ACKNOWLEDGED,
-            "acknowledged_at": datetime.utcnow(),
-            "acknowledged_by": acknowledged_by,
-            "updated_at": datetime.utcnow()
-        }
-        
-        result = await db.alerts.update_many(
-            {"_id": {"$in": alert_ids}},
-            {"$set": update_data}
-        )
-        
-        # Also update in-memory
-        for alert_id in alert_ids:
-            if alert_id in alerts_storage:
-                alert = alerts_storage[alert_id]
-                alert.status = AlertStatus.ACKNOWLEDGED
-                alert.acknowledged_at = datetime.utcnow()
-                alert.acknowledged_by = acknowledged_by
-                alert.updated_at = datetime.utcnow()
+        alerts_storage[alert_id] = alert
+        logger.info(f"Acknowledged alert {alert_id} by {ack_data.acknowledged_by}")
         
         return {
             "success": True,
-            "message": f"Acknowledged {result.modified_count} alerts",
-            "modified_count": result.modified_count
+            "message": "Alert acknowledged successfully",
+            "alert": alert
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Failed to acknowledge alert {alert_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/alerts/{alert_id}/resolve")
+async def resolve_alert(alert_id: str, resolve_data: AlertResolveRequest):
+    """Resolve an alert"""
+    try:
+        if alert_id not in alerts_storage:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        
+        alert = alerts_storage[alert_id]
+        alert.resolved = True
+        alert.resolved_at = datetime.utcnow()
+        alert.resolved_by = resolve_data.resolved_by
+        alert.status = AlertStatus.RESOLVED
+        
+        # Also mark as acknowledged
+        if not alert.acknowledged:
+            alert.acknowledged = True
+            alert.acknowledged_at = datetime.utcnow()
+            alert.acknowledged_by = resolve_data.resolved_by
+        
+        if resolve_data.resolution_notes:
+            alert.metadata["resolution_notes"] = resolve_data.resolution_notes
+        
+        alerts_storage[alert_id] = alert
+        logger.info(f"Resolved alert {alert_id} by {resolve_data.resolved_by}")
+        
+        return {
+            "success": True,
+            "message": "Alert resolved successfully",
+            "alert": alert
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to resolve alert {alert_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/alerts/{alert_id}/mute")
+async def mute_alert(alert_id: str, duration_hours: int = Query(24, description="Mute duration in hours")):
+    """Mute an alert for specified duration"""
+    try:
+        if alert_id not in alerts_storage:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        
+        alert = alerts_storage[alert_id]
+        alert.status = AlertStatus.MUTED
+        alert.muted_until = datetime.utcnow() + timedelta(hours=duration_hours)
+        
+        alerts_storage[alert_id] = alert
+        logger.info(f"Muted alert {alert_id} for {duration_hours} hours")
+        
+        return {
+            "success": True,
+            "message": f"Alert muted for {duration_hours} hours",
+            "muted_until": alert.muted_until.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to mute alert {alert_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/alerts/{alert_id}")
 async def delete_alert(alert_id: str):
     """Delete an alert"""
     try:
-        db = get_database()
-        result = await db.alerts.delete_one({"_id": alert_id})
-        
-        if result.deleted_count == 0:
-            if alert_id in alerts_storage:
-                del alerts_storage[alert_id]
-                return {"success": True, "message": "Alert deleted"}
+        if alert_id not in alerts_storage:
             raise HTTPException(status_code=404, detail="Alert not found")
         
-        # Also remove from in-memory
-        if alert_id in alerts_storage:
-            del alerts_storage[alert_id]
+        deleted_alert = alerts_storage[alert_id]
+        del alerts_storage[alert_id]
+        logger.info(f"Deleted alert {alert_id}: {deleted_alert.title}")
         
-        return {"success": True, "message": "Alert deleted"}
+        return {
+            "success": True,
+            "message": "Alert deleted successfully"
+        }
         
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to delete alert {alert_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/alerts/test-notification")
-async def test_alert_notification(webhook_url: str, message: str = "Test alert from Industrial IoT System"):
-    """Test alert notification to webhook"""
+@router.post("/alerts/bulk-acknowledge")
+async def bulk_acknowledge_alerts(alert_ids: List[str], acknowledged_by: str = "admin"):
+    """Acknowledge multiple alerts at once"""
     try:
-        import httpx
+        acknowledged_count = 0
         
-        payload = {
-            "text": message,
-            "timestamp": datetime.utcnow().isoformat(),
-            "source": "Industrial IoT Alert System",
-            "severity": "info",
-            "test": True
+        for alert_id in alert_ids:
+            if alert_id in alerts_storage:
+                alert = alerts_storage[alert_id]
+                if not alert.acknowledged:
+                    alert.acknowledged = True
+                    alert.acknowledged_at = datetime.utcnow()
+                    alert.acknowledged_by = acknowledged_by
+                    alert.status = AlertStatus.ACKNOWLEDGED
+                    acknowledged_count += 1
+        
+        logger.info(f"Bulk acknowledged {acknowledged_count} alerts by {acknowledged_by}")
+        
+        return {
+            "success": True,
+            "message": f"Acknowledged {acknowledged_count} alerts",
+            "acknowledged_count": acknowledged_count
         }
         
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                webhook_url,
-                json=payload,
-                timeout=10.0
+    except Exception as e:
+        logger.error(f"Failed to bulk acknowledge alerts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/alerts/stats")
+async def get_alert_stats():
+    """Get alert statistics"""
+    try:
+        # Initialize sample data if empty
+        if not alerts_storage:
+            sample_alerts = create_sample_alerts()
+            for alert in sample_alerts:
+                alerts_storage[alert.id] = alert
+        
+        all_alerts = list(alerts_storage.values())
+        now = datetime.utcnow()
+        last_hour = now - timedelta(hours=1)
+        last_24h = now - timedelta(hours=24)
+        
+        stats = {
+            "total": len(all_alerts),
+            "active": len([a for a in all_alerts if a.status == AlertStatus.ACTIVE]),
+            "acknowledged": len([a for a in all_alerts if a.status == AlertStatus.ACKNOWLEDGED]),
+            "resolved": len([a for a in all_alerts if a.status == AlertStatus.RESOLVED]),
+            "muted": len([a for a in all_alerts if a.status == AlertStatus.MUTED]),
+            "last_hour": len([a for a in all_alerts if a.timestamp > last_hour]),
+            "last_24h": len([a for a in all_alerts if a.timestamp > last_24h]),
+            "by_severity": {
+                "critical": len([a for a in all_alerts if a.severity == AlertSeverity.CRITICAL]),
+                "error": len([a for a in all_alerts if a.severity == AlertSeverity.ERROR]),
+                "warning": len([a for a in all_alerts if a.severity == AlertSeverity.WARNING]),
+                "info": len([a for a in all_alerts if a.severity == AlertSeverity.INFO])
+            },
+            "by_source_type": {
+                "device": len([a for a in all_alerts if a.source_type == "device"]),
+                "protocol": len([a for a in all_alerts if a.source_type == "protocol"]),
+                "system": len([a for a in all_alerts if a.source_type == "system"])
+            },
+            "by_category": {}
+        }
+        
+        # Count by category
+        categories = {}
+        for alert in all_alerts:
+            cat = alert.category
+            categories[cat] = categories.get(cat, 0) + 1
+        stats["by_category"] = categories
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Failed to get alert stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Helper function to broadcast new alerts
+async def broadcast_new_alert(alert: SystemAlert):
+    """Broadcast new alert via WebSocket"""
+    try:
+        # Import websocket_manager here to avoid circular imports
+        from .websocket import websocket_manager
+        
+        message = {
+            "type": "new_alert",
+            "data": alert.dict()
+        }
+        
+        await websocket_manager.broadcast(message, "alerts")
+        logger.info(f"Broadcast new alert: {alert.title}")
+        
+    except ImportError:
+        logger.warning("WebSocket manager not available for alert broadcast")
+    except Exception as e:
+        logger.error(f"Failed to broadcast alert: {e}")
+
+# Background task to generate demo alerts
+async def start_demo_alert_generator():
+    """Generate demo alerts for testing"""
+    await asyncio.sleep(10)  # Wait for system startup
+    
+    while True:
+        try:
+            await asyncio.sleep(120)  # Every 2 minutes
+            
+            # Don't spam too many alerts
+            if len(alerts_storage) > 15:
+                continue
+            
+            # Generate random demo alerts
+            demo_alerts = [
+                ("device_status", "Kontrola urządzenia", "Rutynowa kontrola urządzenia zakończona pomyślnie", AlertSeverity.INFO, "device_monitor"),
+                ("performance", "Zużycie CPU", f"Zużycie CPU: {25 + (datetime.utcnow().minute % 30)}%", AlertSeverity.INFO, "system_monitor"),
+                ("connection", "Połączenia stabilne", "Wszystkie połączenia protokołów są stabilne", AlertSeverity.INFO, "protocol_manager")
+            ]
+            
+            alert_type, title, message, severity, source = demo_alerts[datetime.utcnow().minute % 3]
+            
+            new_alert = SystemAlert(
+                id=f"alert_demo_{int(datetime.utcnow().timestamp())}_{abs(hash(title)) % 1000}",
+                type=alert_type,
+                title=title,
+                message=message,
+                severity=severity,
+                source=source,
+                source_type="system",
+                source_name="Demo System",
+                category="demo",
+                timestamp=datetime.utcnow(),
+                metadata={"auto_generated": True, "demo": True}
             )
             
-        if response.status_code == 200:
-            return {"success": True, "message": "Test notification sent successfully"}
-        else:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Webhook responded with status {response.status_code}"
-            )
-        
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=408, detail="Webhook request timed out")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to send notification: {str(e)}")
+            alerts_storage[new_alert.id] = new_alert
+            await broadcast_new_alert(new_alert)
+            
+        except Exception as e:
+            logger.error(f"Error in demo alert generator: {e}")
+            await asyncio.sleep(60)  # Wait before retry
+
+# Start demo alert generator
+asyncio.create_task(start_demo_alert_generator())
