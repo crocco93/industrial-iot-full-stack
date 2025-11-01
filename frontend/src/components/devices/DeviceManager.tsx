@@ -1,24 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { 
-  Plus, 
-  Edit, 
-  Trash2, 
-  Power, 
-  PowerOff, 
-  Settings, 
+import {
+  Plus,
+  Edit,
+  Trash2,
+  Power,
+  PowerOff,
+  Settings,
   RefreshCw,
   Search,
   Filter,
   Activity,
   AlertCircle
 } from 'lucide-react';
-import { AddDeviceDialog } from './AddDeviceDialog';  // ✅ ZMIENIONE
+import { AddDeviceDialog } from './AddDeviceDialog';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/services/api';
 
@@ -47,75 +47,77 @@ interface Device {
 export function DeviceManager() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showAddDialog, setShowAddDialog] = useState(false);  // ✅ ZMIENIONE
+  const [showAddDialog, setShowAddDialog] = useState(false);
   const [editingDevice, setEditingDevice] = useState<Device | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | Device['status']>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | Device['device_type']>('all');
   const { toast } = useToast();
 
-  useEffect(() => {
-    loadDevices();
-  }, []);
-
-  const loadDevices = async () => {
+  const loadDevices = useCallback(async () => {
     try {
       const response = await api.get('/api/devices');
       setDevices(response.data || []);
     } catch (error) {
       console.error('Error loading devices:', error);
       toast({
-        title: "Błąd",
-        description: "Nie udało się załadować urządzeń",
-        variant: "destructive",
+        title: 'Błąd',
+        description: 'Nie udało się załadować urządzeń',
+        variant: 'destructive',
       });
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
-  const handleDeleteDevice = async (device: Device) => {
+  useEffect(() => {
+    void loadDevices();
+  }, [loadDevices]);
+
+  const handleDeleteDevice = useCallback(async (device: Device) => {
     if (!confirm(`Czy na pewno chcesz usunąć urządzenie "${device.name}"?`)) return;
-
     try {
       await api.delete(`/api/devices/${device.id}`);
-      setDevices(devices.filter(d => d.id !== device.id));
-      toast({
-        title: "Sukces",
-        description: "Urządzenie zostało usunięte",
-      });
+      setDevices(prev => prev.filter(d => d.id !== device.id));
+      toast({ title: 'Sukces', description: 'Urządzenie zostało usunięte' });
     } catch (error) {
       console.error('Error deleting device:', error);
       toast({
-        title: "Błąd",
-        description: "Nie udało się usunąć urządzenia",
-        variant: "destructive",
+        title: 'Błąd',
+        description: 'Nie udało się usunąć urządzenia',
+        variant: 'destructive',
       });
     }
-  };
+  }, [toast]);
 
-  const toggleDeviceStatus = async (device: Device) => {
-    const newStatus = device.status === 'active' ? 'inactive' : 'active';
+  const toggleDeviceStatus = useCallback(async (device: Device) => {
+    const newStatus: Device['status'] = device.status === 'active' ? 'inactive' : 'active';
     try {
       await api.put(`/api/devices/${device.id}`, { status: newStatus });
-      setDevices(devices.map(d => 
-        d.id === device.id ? { ...d, status: newStatus } : d
-      ));
+      setDevices(prev =>
+        prev.map(d => (d.id === device.id ? { ...d, status: newStatus } : d)),
+      );
       toast({
-        title: "Sukces",
+        title: 'Sukces',
         description: `Urządzenie ${newStatus === 'active' ? 'aktywowane' : 'deaktywowane'}`,
       });
     } catch (error) {
       console.error('Error toggling device status:', error);
       toast({
-        title: "Błąd",
-        description: "Nie udało się zmienić statusu urządzenia",
-        variant: "destructive",
+        title: 'Błąd',
+        description: 'Nie udało się zmienić statusu urządzenia',
+        variant: 'destructive',
       });
     }
-  };
+  }, [toast]);
 
-  const getStatusBadge = (device: Device) => {
+  const handleDeviceAdded = useCallback(() => {
+    void loadDevices();     // odśwież listę
+    setShowAddDialog(false);
+    setEditingDevice(null);
+  }, [loadDevices]);
+
+  const getStatusBadge = useCallback((device: Device) => {
     if (device.status === 'active' && device.online) {
       return <Badge className="bg-green-100 text-green-800">Online</Badge>;
     }
@@ -126,31 +128,28 @@ export function DeviceManager() {
       return <Badge className="bg-red-100 text-red-800">Błąd</Badge>;
     }
     return <Badge className="bg-gray-100 text-gray-800">Nieaktywny</Badge>;
-  };
+  }, []);
 
-  const getDeviceTypeIcon = (device_type: string) => {
+  const getDeviceTypeIcon = useCallback((device_type: Device['device_type']) => {
     return device_type === 'infrastructure' ? '🔌' : '🏭';
-  };
+  }, []);
 
-  // ✅ Handler dla sukcesu dodania urządzenia
-  const handleDeviceAdded = () => {
-    loadDevices(); // Reload the devices list
-    setShowAddDialog(false);
-  };
+  const filteredDevices = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    return devices.filter(device => {
+      const matchesSearch =
+        !q ||
+        device.name.toLowerCase().includes(q) ||
+        (device.description?.toLowerCase() || '').includes(q) ||
+        (device.vendor?.toLowerCase() || '').includes(q) ||
+        (device.model?.toLowerCase() || '').includes(q);
 
-  // Filter devices based on search and filters
-  const filteredDevices = devices.filter(device => {
-    const matchesSearch = !searchTerm || 
-      device.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      device.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      device.vendor.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      device.model.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || device.status === statusFilter;
-    const matchesType = typeFilter === 'all' || device.device_type === typeFilter;
-    
-    return matchesSearch && matchesStatus && matchesType;
-  });
+      const matchesStatus = statusFilter === 'all' || device.status === statusFilter;
+      const matchesType = typeFilter === 'all' || device.device_type === typeFilter;
+
+      return matchesSearch && matchesStatus && matchesType;
+    });
+  }, [devices, searchTerm, statusFilter, typeFilter]);
 
   return (
     <div className="space-y-6">
@@ -164,7 +163,12 @@ export function DeviceManager() {
             <RefreshCw className="h-4 w-4 mr-2" />
             Odśwież
           </Button>
-          <Button onClick={() => setShowAddDialog(true)}>  {/* ✅ ZMIENIONE */}
+          <Button
+            onClick={() => {
+              setEditingDevice(null);
+              setShowAddDialog(true);
+            }}
+          >
             <Plus className="h-4 w-4 mr-2" />
             Dodaj urządzenie
           </Button>
@@ -190,8 +194,8 @@ export function DeviceManager() {
                 className="pl-8"
               />
             </div>
-            
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)}>
               <SelectTrigger>
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
@@ -202,8 +206,8 @@ export function DeviceManager() {
                 <SelectItem value="error">Błędy</SelectItem>
               </SelectContent>
             </Select>
-            
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
+
+            <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as any)}>
               <SelectTrigger>
                 <SelectValue placeholder="Typ urządzenia" />
               </SelectTrigger>
@@ -213,7 +217,7 @@ export function DeviceManager() {
                 <SelectItem value="production">🏭 Production</SelectItem>
               </SelectContent>
             </Select>
-            
+
             <div className="text-sm text-gray-600 self-center">
               {filteredDevices.length} z {devices.length} urządzeń
             </div>
@@ -231,9 +235,7 @@ export function DeviceManager() {
             </div>
             <Badge variant="secondary">{devices.length} total</Badge>
           </CardTitle>
-          <CardDescription>
-            Wszystkie skonfigurowane urządzenia w systemie
-          </CardDescription>
+          <CardDescription>Wszystkie skonfigurowane urządzenia w systemie</CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -246,7 +248,12 @@ export function DeviceManager() {
                 <>
                   <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                   <div className="text-gray-500 mb-4">Brak skonfigurowanych urządzeń</div>
-                  <Button onClick={() => setShowAddDialog(true)}>
+                  <Button
+                    onClick={() => {
+                      setEditingDevice(null);
+                      setShowAddDialog(true);
+                    }}
+                  >
                     <Plus className="h-4 w-4 mr-2" />
                     Dodaj pierwsze urządzenie
                   </Button>
@@ -255,11 +262,14 @@ export function DeviceManager() {
                 <>
                   <AlertCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                   <div className="text-gray-500 mb-4">Brak urządzeń pasujących do filtrów</div>
-                  <Button variant="outline" onClick={() => {
-                    setSearchTerm('');
-                    setStatusFilter('all');
-                    setTypeFilter('all');
-                  }}>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setSearchTerm('');
+                      setStatusFilter('all');
+                      setTypeFilter('all');
+                    }}
+                  >
                     Wyczyść filtry
                   </Button>
                 </>
@@ -280,7 +290,7 @@ export function DeviceManager() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredDevices.map((device) => (
+                {filteredDevices.map(device => (
                   <TableRow key={device.id}>
                     <TableCell>
                       <div className="flex items-center space-x-3">
@@ -303,12 +313,8 @@ export function DeviceManager() {
                     </TableCell>
                     <TableCell>
                       <div className="text-sm">
-                        {device.location_id && (
-                          <div>📍 {device.location_id}</div>
-                        )}
-                        {device.area_id && (
-                          <div className="text-gray-500">→ {device.area_id}</div>
-                        )}
+                        {device.location_id && <div>📍 {device.location_id}</div>}
+                        {device.area_id && <div className="text-gray-500">→ {device.area_id}</div>}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -346,7 +352,7 @@ export function DeviceManager() {
                           variant="outline"
                           onClick={() => {
                             setEditingDevice(device);
-                            setShowAddDialog(true);  // Use same dialog for editing
+                            setShowAddDialog(true);
                           }}
                           title="Edytuj urządzenie"
                         >
@@ -370,43 +376,17 @@ export function DeviceManager() {
           )}
         </CardContent>
       </Card>
-      
-      {/* ✅ DODANY Dialog */}
-      <AddDeviceDialog 
+
+      {/* Dialog dodawania/edycji */}
+      <AddDeviceDialog
         open={showAddDialog}
         onClose={() => {
           setShowAddDialog(false);
           setEditingDevice(null);
         }}
         onSuccess={handleDeviceAdded}
+        device={editingDevice ?? undefined} // jeśli AddDeviceDialog obsługuje edycję
       />
     </div>
   );
-
-  // ✅ Handler dla sukcesu dodania urządzenia
-  const handleDeviceAdded = () => {
-    loadDevices(); // Reload the devices list
-    setShowAddDialog(false);
-  };
-
-  const toggleDeviceStatus = async (device: Device) => {
-    const newStatus = device.status === 'active' ? 'inactive' : 'active';
-    try {
-      await api.put(`/api/devices/${device.id}`, { status: newStatus });
-      setDevices(devices.map(d => 
-        d.id === device.id ? { ...d, status: newStatus } : d
-      ));
-      toast({
-        title: "Sukces",
-        description: `Urządzenie ${newStatus === 'active' ? 'aktywowane' : 'deaktywowane'}`,
-      });
-    } catch (error) {
-      console.error('Error toggling device status:', error);
-      toast({
-        title: "Błąd",
-        description: "Nie udało się zmienić statusu urządzenia",
-        variant: "destructive",
-      });
-    }
-  };
 }

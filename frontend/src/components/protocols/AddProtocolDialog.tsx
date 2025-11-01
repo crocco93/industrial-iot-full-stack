@@ -236,7 +236,13 @@ export function AddProtocolDialog({ open, onClose, onSuccess }: AddProtocolDialo
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+    // zamykaj tylko gdy ktoś kliknie w tło / ESC
+      if (!v) onClose();
+    }}
+    >
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Add New Protocol</DialogTitle>
