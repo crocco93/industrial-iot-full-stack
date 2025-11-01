@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 from database.mongodb import init_database, close_database
-from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards
+from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards, historical
 from services.protocol_manager import protocol_manager
 from services.websocket_manager import start_websocket_heartbeat
 
@@ -91,7 +91,8 @@ app.add_middleware(
 app.include_router(protocols.router, prefix="/api", tags=["protocols"])
 app.include_router(connections.router, prefix="/api", tags=["connections"])
 app.include_router(devices.router, prefix="/api", tags=["devices"])
-app.include_router(dashboards.router, prefix="/api", tags=["dashboards"])  # ✅ DODANE
+app.include_router(dashboards.router, prefix="/api", tags=["dashboards"])
+app.include_router(historical.router, prefix="/api", tags=["historical"])  # ✅ DODANE!
 app.include_router(monitoring.router, prefix="/api", tags=["monitoring"])
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(logs.router, prefix="/api", tags=["logs"])
@@ -122,6 +123,13 @@ async def root():
             "N8N Workflow Automation",
             "Ollama LLM Assistant"
         ],
+        "features": [
+            "Real-time Data Collection",
+            "Historical Data Analysis",
+            "Custom Dashboards",
+            "Health Monitoring",
+            "Hierarchical Device Management"
+        ],
         "documentation": "/docs",
         "openapi": "/openapi.json",
         "health_check": "/health",
@@ -135,7 +143,7 @@ async def health_check():
         # Get protocol manager status
         protocol_status = protocol_manager.get_all_protocol_status()
         
-        # Get WebSocket manager stats
+        # Get WebSocket manager stats  
         from services.websocket_manager import websocket_manager
         ws_stats = websocket_manager.get_connection_stats()
         
@@ -155,42 +163,48 @@ async def health_check():
             }
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+        # Return partial health status if some components fail
+        return {
+            "status": "degraded",
+            "message": f"API running with limited functionality: {str(e)}",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "error": str(e)
+        }
 
 @app.get("/api/status")
 async def api_status():
     """Get detailed API status"""
     try:
         # Get protocol manager status
-        protocol_status = protocol_manager.get_all_protocol_status()
+        try:
+            protocol_status = protocol_manager.get_all_protocol_status()
+        except Exception as e:
+            protocol_status = []
+            print(f"Protocol manager unavailable: {e}")
         
         # Get protocol service status
-        from services.protocol_services import get_available_protocols
-        available_protocols = get_available_protocols()
+        try:
+            from services.protocol_services import get_available_protocols
+            available_protocols = get_available_protocols()
+        except Exception as e:
+            available_protocols = ["modbus-tcp", "opc-ua", "mqtt"]  # Default list
+            print(f"Protocol services check failed: {e}")
         
         # Get database statistics
         try:
             from models.protocol import Protocol
             from models.connection import Connection
             from models.device import Device
-            from models.monitoring import MonitoringData
             
             total_protocols = await Protocol.count()
             total_connections = await Connection.count()
             total_devices = await Device.count()
             
-            # Recent monitoring data (last hour)
-            from datetime import timedelta
-            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-            recent_monitoring = await MonitoringData.find(
-                MonitoringData.timestamp >= one_hour_ago
-            ).count()
-            
             db_stats = {
                 "total_protocols": total_protocols,
                 "total_connections": total_connections,
                 "total_devices": total_devices,
-                "monitoring_data_last_hour": recent_monitoring
+                "status": "connected"
             }
         except Exception as e:
             # If database is not available, provide mock stats
@@ -198,8 +212,8 @@ async def api_status():
                 "total_protocols": 0,
                 "total_connections": 0,
                 "total_devices": 0,
-                "monitoring_data_last_hour": 0,
-                "note": f"Database unavailable: {e}"
+                "status": "disconnected",
+                "error": str(e)
             }
         
         return {
@@ -214,7 +228,12 @@ async def api_status():
             "database_statistics": db_stats
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Status check failed: {str(e)}")
+        return {
+            "api_version": "1.0.0",
+            "status": "error",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 3001))
