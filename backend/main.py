@@ -6,7 +6,7 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 from database.mongodb import init_database, close_database
-from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards, historical, alerts, locations
+from api import protocols, connections, monitoring, logs, security, settings, websocket, data_points, integrations, devices, health, dashboards, historical, alerts, locations, device_discovery
 from services.protocol_manager import protocol_manager
 from services.websocket_manager import start_websocket_heartbeat
 
@@ -104,7 +104,8 @@ app.add_middleware(
 app.include_router(protocols.router, prefix="/api", tags=["protocols"])
 app.include_router(connections.router, prefix="/api", tags=["connections"])
 app.include_router(devices.router, prefix="/api", tags=["devices"])
-app.include_router(locations.router, prefix="/api", tags=["locations"])  # ✅ DODANE
+app.include_router(device_discovery.router, prefix="/api", tags=["device-discovery"])  # ✅ DODANE
+app.include_router(locations.router, prefix="/api", tags=["locations"])
 app.include_router(dashboards.router, prefix="/api", tags=["dashboards"])
 app.include_router(historical.router, prefix="/api", tags=["historical"])
 app.include_router(alerts.router, prefix="/api", tags=["alerts"])
@@ -146,7 +147,8 @@ async def root():
             "Health Monitoring",
             "Hierarchical Device Management",
             "WebSocket Real-time Updates",
-            "Location & Area Management"
+            "Location & Area Management",
+            "Automatic Device Discovery"  # ✅ DODANE
         ],
         "documentation": "/docs",
         "openapi": "/openapi.json",
@@ -174,7 +176,8 @@ async def health_check():
                 "protocol_manager": "running",
                 "websocket_manager": "running",
                 "alert_system": "running",
-                "location_management": "running"
+                "location_management": "running",
+                "device_discovery": "available"  # ✅ DODANE
             },
             "statistics": {
                 "active_protocols": len(protocol_status),
@@ -245,7 +248,13 @@ async def api_status():
                 "protocol_details": protocol_status
             },
             "available_protocols": available_protocols,
-            "database_statistics": db_stats
+            "database_statistics": db_stats,
+            "features": {
+                "device_discovery": True,
+                "location_management": True,
+                "real_time_monitoring": True,
+                "alert_system": True
+            }
         }
     except Exception as e:
         return {
