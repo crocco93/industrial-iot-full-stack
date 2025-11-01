@@ -14,6 +14,8 @@ from .system_settings import SystemSettings
 from .device import Device
 from .data_point import DataPoint
 from .historical_data import HistoricalData
+from .location import Location, LocationType, LocationStatus
+from .alert import Alert, AlertSeverity, AlertStatus
 
 __all__ = [
     'Protocol',
@@ -25,5 +27,11 @@ __all__ = [
     'Device',
     'DataPoint',
     'DataType',
-    'HistoricalData'
+    'HistoricalData',
+    'Location',
+    'LocationType', 
+    'LocationStatus',
+    'Alert',
+    'AlertSeverity',
+    'AlertStatus'
 ]
