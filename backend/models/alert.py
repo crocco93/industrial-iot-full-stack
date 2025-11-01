@@ -1,7 +1,7 @@
 from beanie import Document
 from pydantic import Field
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
 from enum import Enum
 
 class AlertSeverity(str, Enum):
@@ -39,6 +39,7 @@ class Alert(Document):
     device_id: Optional[str] = Field(default=None, description="Related device ID")
     protocol_id: Optional[str] = Field(default=None, description="Related protocol ID")
     connection_id: Optional[str] = Field(default=None, description="Related connection ID")
+    location_id: Optional[str] = Field(default=None, description="Related location ID")
     
     # Threshold information (for threshold-based alerts)
     threshold_value: Optional[float] = Field(default=None, description="Threshold value that was exceeded")
@@ -77,6 +78,7 @@ class Alert(Document):
             "device_id",
             "data_point_id",
             "protocol_id",
+            "location_id",
             ["status", "severity"],  # Compound index
             ["created_at", "severity"]  # Compound index
         ]
@@ -185,6 +187,13 @@ COMMON_ALERT_TEMPLATES = {
         "severity": AlertSeverity.CRITICAL,
         "category": "security",
         "source_type": "system"
+    },
+    "location_alert": {
+        "title": "Location Alert",
+        "description": "Alert in location {location_name}: {event_description}",
+        "severity": AlertSeverity.MEDIUM,
+        "category": "location",
+        "source_type": "location"
     }
 }
 
